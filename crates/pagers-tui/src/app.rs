@@ -5,6 +5,7 @@ use pagers_core::events::Event as CoreEvent;
 use crate::event::TuiEvent;
 use crate::state::FileState;
 
+#[derive(Default)]
 pub struct App {
     files: Vec<FileState>,
     file_index: HashMap<String, usize>,
@@ -18,10 +19,7 @@ pub enum ControlFlow {
 
 impl App {
     pub fn new() -> Self {
-        Self {
-            files: Vec::new(),
-            file_index: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Process a TUI event, updating state. Returns what the run loop should do.
@@ -61,7 +59,6 @@ impl App {
                 }
                 ControlFlow::Continue
             }
-            TuiEvent::Tick => ControlFlow::Continue,
             TuiEvent::CoreDone => ControlFlow::Done,
             TuiEvent::Quit => ControlFlow::Quit,
         }
@@ -70,14 +67,14 @@ impl App {
     /// Returns files sorted by ratio (ascending) for display.
     pub fn files(&self) -> Vec<&FileState> {
         let mut sorted: Vec<&FileState> = self.files.iter().collect();
-        sorted.sort_by(|a, b| a.ratio().partial_cmp(&b.ratio()).unwrap());
+        sorted.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
         sorted
     }
 
     /// Consume self, return owned files sorted by ratio.
     pub fn into_files(self) -> Vec<FileState> {
         let mut files = self.files;
-        files.sort_by(|a, b| a.ratio().partial_cmp(&b.ratio()).unwrap());
+        files.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
         files
     }
 }
@@ -162,10 +159,4 @@ mod tests {
         assert!(matches!(flow, ControlFlow::Quit));
     }
 
-    #[test]
-    fn test_tick_returns_continue() {
-        let mut app = App::new();
-        let flow = app.handle_event(TuiEvent::Tick);
-        assert!(matches!(flow, ControlFlow::Continue));
-    }
 }

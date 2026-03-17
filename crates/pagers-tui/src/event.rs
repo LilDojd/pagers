@@ -8,7 +8,6 @@ use pagers_core::events::Event as CoreEvent;
 pub(crate) enum TuiEvent {
     Core(CoreEvent),
     CoreDone,
-    Tick,
     Quit,
 }
 
@@ -19,22 +18,17 @@ pub(crate) fn spawn_event_threads(
 ) -> mpsc::Receiver<TuiEvent> {
     let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent>();
 
-    // Input/tick thread: polls for keyboard events, sends Tick every 100ms.
-    let tick_tx = tui_tx.clone();
+    // Input thread: polls for Ctrl+C.
+    let input_tx = tui_tx.clone();
     thread::spawn(move || {
         use crossterm::event::{self, Event, KeyCode, KeyModifiers};
         loop {
-            if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-                if let Ok(Event::Key(key)) = event::read() {
-                    if key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        let _ = tick_tx.send(TuiEvent::Quit);
-                        break;
-                    }
-                }
-            }
-            if tick_tx.send(TuiEvent::Tick).is_err() {
+            if event::poll(Duration::from_millis(100)).unwrap_or(false)
+                && let Ok(Event::Key(key)) = event::read()
+                && key.code == KeyCode::Char('c')
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+            {
+                let _ = input_tx.send(TuiEvent::Quit);
                 break;
             }
         }

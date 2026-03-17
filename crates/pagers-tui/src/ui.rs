@@ -6,25 +6,7 @@ use ratatui::Frame;
 
 use crate::state::FileState;
 
-/// Render the full viewport.
-pub(crate) fn render(frame: &mut Frame, files: &[FileState], viewport_height: u16) {
-    if files.is_empty() {
-        return;
-    }
-
-    let max_rows = viewport_height as usize;
-    let visible = &files[..files.len().min(max_rows)];
-
-    let constraints: Vec<Constraint> = visible.iter().map(|_| Constraint::Length(1)).collect();
-
-    let areas = Layout::vertical(constraints).split(frame.area());
-
-    for (i, file) in visible.iter().enumerate() {
-        render_file_row(frame, file, areas[i]);
-    }
-}
-
-/// Render sorted `&[&FileState]` references.
+/// Render files into the viewport.
 pub(crate) fn render_refs(frame: &mut Frame, files: &[&FileState], viewport_height: u16) {
     if files.is_empty() {
         return;
@@ -112,22 +94,28 @@ mod tests {
     fn test_render_empty_is_blank() {
         let backend = TestBackend::new(60, 4);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &[], 4)).unwrap();
+        let files: Vec<&FileState> = vec![];
+        terminal
+            .draw(|frame| render_refs(frame, &files, 4))
+            .unwrap();
         let content = buffer_to_string(terminal.backend().buffer());
         assert!(content.trim().is_empty());
     }
 
     #[test]
     fn test_render_single_file() {
-        let files = vec![FileState {
+        let file = FileState {
             path: "/tmp/test.bin".to_string(),
             total_pages: 100,
             pages_in_core: 75,
             done: false,
-        }];
+        };
+        let files: Vec<&FileState> = vec![&file];
         let backend = TestBackend::new(80, 4);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &files, 4)).unwrap();
+        terminal
+            .draw(|frame| render_refs(frame, &files, 4))
+            .unwrap();
         let content = buffer_to_string(terminal.backend().buffer());
         assert!(content.contains("test.bin"));
         assert!(content.contains("75%"));
@@ -135,24 +123,25 @@ mod tests {
 
     #[test]
     fn test_render_files_sorted_by_ratio() {
-        let mut files = vec![
-            FileState {
-                path: "/high.bin".to_string(),
-                total_pages: 100,
-                pages_in_core: 90,
-                done: false,
-            },
-            FileState {
-                path: "/low.bin".to_string(),
-                total_pages: 100,
-                pages_in_core: 10,
-                done: false,
-            },
-        ];
-        files.sort_by(|a, b| a.ratio().partial_cmp(&b.ratio()).unwrap());
+        let high = FileState {
+            path: "/high.bin".to_string(),
+            total_pages: 100,
+            pages_in_core: 90,
+            done: false,
+        };
+        let low = FileState {
+            path: "/low.bin".to_string(),
+            total_pages: 100,
+            pages_in_core: 10,
+            done: false,
+        };
+        let mut files: Vec<&FileState> = vec![&high, &low];
+        files.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
         let backend = TestBackend::new(80, 4);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &files, 4)).unwrap();
+        terminal
+            .draw(|frame| render_refs(frame, &files, 4))
+            .unwrap();
         let buf = terminal.backend().buffer().clone();
         let row0: String = (0..buf.area.width)
             .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
