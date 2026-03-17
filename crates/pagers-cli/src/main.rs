@@ -66,11 +66,18 @@ where
 
     let stats = Arc::new(ops::Stats::new());
     let start = Instant::now();
+    let mode = std::any::type_name::<O>()
+        .rsplit("::")
+        .next()
+        .unwrap_or("unknown")
+        .to_lowercase();
 
     let outputs = if let Some(events_rx) = events_rx {
         let term_clone = Arc::clone(term);
+        let stats_clone = Arc::clone(&stats);
+        let tui_mode = mode;
         let tui_handle = std::thread::spawn(move || {
-            if let Err(e) = pagers_tui::run(events_rx, term_clone) {
+            if let Err(e) = pagers_tui::run(events_rx, term_clone, stats_clone, tui_mode, start) {
                 ::tracing::error!("TUI error: {e}");
             }
         });
@@ -99,21 +106,6 @@ where
         drop(events_tx);
         outputs
     };
-
-    let elapsed = start.elapsed().as_secs_f64();
-    let output_fmt = common.output.as_ref().map(|f| match f {
-        OutputFormat::Kv => "kv",
-    });
-
-    let mode = std::any::type_name::<O>()
-        .rsplit("::")
-        .next()
-        .unwrap_or("unknown")
-        .to_lowercase();
-
-    if !common.verbosity.is_silent() {
-        output::print_summary(&stats, elapsed, &mode, output_fmt);
-    }
 
     (stats, outputs)
 }

@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use rayon::prelude::*;
+
 use super::{FileContext, Op};
 use crate::mmap;
 
@@ -27,7 +29,6 @@ impl Op for Touch {
             })
             .collect();
 
-        use rayon::prelude::*;
         chunks.par_iter().for_each(|&(off, chunk_len)| {
             if let Err(e) = mmap::advise_willneed(mmap, off, chunk_len) {
                 tracing::warn!("madvise failed at offset {off}: {e}");
@@ -57,20 +58,44 @@ impl Op for Touch {
                     .map(|(i, _)| i)
                     .collect();
 
-                non_resident.par_iter().for_each(|&page_idx| {
-                    let offset = page_idx * page_size;
-                    if offset < len {
-                        unsafe {
-                            let _byte = std::ptr::read_volatile(mmap.as_ptr().add(offset));
+                // Fault all pages in a background thread, poll mincore for progress
+                let mmap_ptr = mmap.as_ptr() as usize;
+                let non_resident_clone = non_resident.clone();
+                let fault_handle = std::thread::spawn(move || {
+                    non_resident_clone.par_iter().for_each(|&page_idx| {
+                        let offset = page_idx * page_size;
+                        if offset < len {
+                            unsafe {
+                                let _byte =
+                                    std::ptr::read_volatile((mmap_ptr as *const u8).add(offset));
+                            }
                         }
-                    }
+                    });
                 });
 
-                if let Some(tx) = ctx.events {
-                    let final_residency = mmap::mincore_residency(mmap, len)?;
+                // Poll residency while faults are in progress
+                let poll_interval = std::time::Duration::from_millis(100);
+                while !fault_handle.is_finished() {
+                    std::thread::sleep(poll_interval);
+                    if let Some(tx) = ctx.events
+                        && let Ok(r) = mmap::mincore_residency(mmap, len)
+                    {
+                        let _ = tx.send(crate::events::Event::FileProgress {
+                            path: ctx.path.display().to_string(),
+                            residency: r,
+                        });
+                    }
+                }
+
+                fault_handle.join().expect("fault thread panicked");
+
+                // Final progress event
+                if let Some(tx) = ctx.events
+                    && let Ok(r) = mmap::mincore_residency(mmap, len)
+                {
                     let _ = tx.send(crate::events::Event::FileProgress {
                         path: ctx.path.display().to_string(),
-                        residency: final_residency,
+                        residency: r,
                     });
                 }
                 break;

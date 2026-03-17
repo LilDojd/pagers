@@ -35,6 +35,45 @@ pub fn crawl_and_process<O: Op>(
     let outputs: Arc<std::sync::Mutex<Vec<O::Output>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
 
+    let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
+
+    // Discovery phase: send FileStart for all files so the TUI sees them upfront.
+    let discovered = if let Some(tx) = events {
+        for path in &file_paths {
+            if let Err(e) = ops::send_file_start(path, range, tx) {
+                eprintln!("pagers: WARNING: {}: {e}", path.display());
+            }
+        }
+        true
+    } else {
+        false
+    };
+
+    // Processing phase: execute the operation on each file.
+    for path in &file_paths {
+        match ops::process_file(op, path, range, stats, events, discovered) {
+            Ok(Some(output)) => {
+                outputs.lock().unwrap().push(output);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("pagers: WARNING: {}: {e}", path.display());
+            }
+        }
+    }
+
+    match Arc::try_unwrap(outputs) {
+        Ok(mutex) => mutex.into_inner().expect("mutex poisoned"),
+        Err(_) => panic!("Arc still has multiple owners"),
+    }
+}
+
+fn collect_file_paths(
+    paths: &[PathBuf],
+    crawl_config: &CrawlConfig,
+    seen_inodes: &DashMap<(u64, u64), ()>,
+    stats: &Stats,
+) -> Vec<PathBuf> {
     let mut all_paths: Vec<PathBuf> = paths.to_vec();
 
     if let Some(batch_path) = &crawl_config.batch {
@@ -43,6 +82,8 @@ pub fn crawl_and_process<O: Op>(
             Err(e) => eprintln!("pagers: WARNING: batch file: {e}"),
         }
     }
+
+    let mut file_paths = Vec::new();
 
     for path in &all_paths {
         if path.is_dir() {
@@ -115,10 +156,10 @@ pub fn crawl_and_process<O: Op>(
                     }
                 }
 
-                process_entry(entry_path, op, range, stats, events, &outputs);
+                file_paths.push(entry_path.to_path_buf());
             }
         } else if path.is_file() {
-            process_entry(path, op, range, stats, events, &outputs);
+            file_paths.push(path.clone());
         } else {
             eprintln!(
                 "pagers: WARNING: skipping {}: not a file or directory",
@@ -127,29 +168,7 @@ pub fn crawl_and_process<O: Op>(
         }
     }
 
-    match Arc::try_unwrap(outputs) {
-        Ok(mutex) => mutex.into_inner().expect("mutex poisoned"),
-        Err(_) => panic!("Arc still has multiple owners"),
-    }
-}
-
-fn process_entry<O: Op>(
-    path: &Path,
-    op: &O,
-    range: &FileRange,
-    stats: &Stats,
-    events: Option<&Sender<Event>>,
-    outputs: &Arc<std::sync::Mutex<Vec<O::Output>>>,
-) {
-    match ops::process_file(op, path, range, stats, events) {
-        Ok(Some(output)) => {
-            outputs.lock().unwrap().push(output);
-        }
-        Ok(None) => {}
-        Err(e) => {
-            eprintln!("pagers: WARNING: {}: {e}", path.display());
-        }
-    }
+    file_paths
 }
 
 fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>> {

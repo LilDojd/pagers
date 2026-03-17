@@ -15,5 +15,6 @@ pub enum Event {
         path: String,
         pages_in_core: usize,
         total_pages: usize,
+        residency: Vec<bool>,
     },
 }

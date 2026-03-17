@@ -1,26 +1,46 @@
-use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
 
+use crate::MAX_DISPLAY_PAGES;
 use crate::state::FileState;
+use crate::stats;
 
-pub(crate) fn render_refs(frame: &mut Frame, files: &[&FileState], viewport_height: u16) {
+/// Render file rows and stats summary into a buffer.
+pub(crate) fn render_viewport(
+    files: &[&FileState],
+    max_file_rows: u16,
+    core_stats: &pagers_core::ops::Stats,
+    elapsed: f64,
+    mode: &str,
+    area: Rect,
+    buf: &mut ratatui::buffer::Buffer,
+) {
+    let n = files.len().min(max_file_rows as usize) as u16;
+    let [files_area, stats_area] = Layout::vertical([
+        Constraint::Length(n),
+        Constraint::Length(stats::SUMMARY_LINES),
+    ])
+    .areas(area);
+    render_refs_to_buf(files, max_file_rows, files_area, buf);
+    stats::render_summary(core_stats, elapsed, mode, stats_area, buf);
+}
+
+pub(crate) fn render_refs_to_buf(
+    files: &[&FileState],
+    max_rows: u16,
+    area: ratatui::layout::Rect,
+    buf: &mut ratatui::buffer::Buffer,
+) {
     if files.is_empty() {
         return;
     }
-    let max_rows = viewport_height as usize;
-    let visible = &files[..files.len().min(max_rows)];
+    let visible = &files[..files.len().min(max_rows as usize)];
     let constraints: Vec<Constraint> = visible.iter().map(|_| Constraint::Length(1)).collect();
-    let areas = Layout::vertical(constraints).split(frame.area());
+    let areas = Layout::vertical(constraints).split(area);
     for (i, file) in visible.iter().enumerate() {
-        render_file_row(frame, file, areas[i]);
+        render_file_row_to_buf(file, areas[i], buf);
     }
-}
-
-pub(crate) fn render_file_row(frame: &mut Frame, file: &FileState, area: ratatui::layout::Rect) {
-    render_file_row_to_buf(file, area, frame.buffer_mut());
 }
 
 pub(crate) fn render_file_row_to_buf(
@@ -30,37 +50,32 @@ pub(crate) fn render_file_row_to_buf(
 ) {
     use ratatui::widgets::Widget;
 
-    // Layout: [path] [map] [pages_in_core/total_pages]
-    let counter = format!("{}/{}", file.pages_in_core, file.total_pages);
-    let counter_width = counter.len() as u16 + 1; // +1 for space before counter
+    let fully_loaded = file.total_pages > 0 && file.pages_in_core == file.total_pages;
+    let counter = format!(" {}/{}", file.pages_in_core, file.total_pages);
 
-    let chunks = Layout::horizontal([
-        Constraint::Percentage(25),
-        Constraint::Min(10),
-        Constraint::Length(counter_width),
-    ])
-    .split(area);
-
-    let display_path = truncate_path(&file.path, chunks[0].width as usize);
-
-    let (path_text, cached_style) = if file.done {
-        (
-            format!("\u{2713} {display_path}"),
-            Style::default().fg(Color::Green),
-        )
+    let (status, cached_style) = if file.done && fully_loaded {
+        ("\u{2713} ", Style::default().fg(Color::Green))
+    } else if !file.done {
+        ("  ", Style::default().fg(Color::Cyan))
     } else {
-        (display_path, Style::default().fg(Color::Cyan))
+        ("  ", Style::default())
     };
 
-    Paragraph::new(path_text).render(chunks[0], buf);
+    // Map width scales with total_pages, capped at 20
+    let map_inner = file.total_pages.min(MAX_DISPLAY_PAGES);
+    // brackets + space before map
+    let map_chars = if map_inner > 0 { map_inner + 3 } else { 0 };
+    let path_budget = (area.width as usize).saturating_sub(2 + map_chars + counter.len());
+    let display_path = truncate_path(&file.path, path_budget);
 
-    // Render the page map: [OOOo    oOOO]
-    let map_width = chunks[1].width as usize;
-    if map_width >= 3 {
-        // Reserve 2 chars for brackets
-        let inner_width = map_width - 2;
-        let buckets = file.bucketize(inner_width);
-        let mut spans = Vec::with_capacity(buckets.len() + 2);
+    let mut spans = vec![
+        Span::styled(status, cached_style),
+        Span::styled(display_path, cached_style),
+    ];
+
+    if map_inner > 0 {
+        let buckets = file.bucketize(map_inner);
+        spans.push(Span::raw(" "));
         spans.push(Span::styled("[", Style::default().fg(Color::DarkGray)));
         for &(cached, total) in &buckets {
             let ratio = if total == 0 {
@@ -68,29 +83,22 @@ pub(crate) fn render_file_row_to_buf(
             } else {
                 cached as f64 / total as f64
             };
-            let (ch, style) = if ratio >= 0.75 {
-                ("O", cached_style)
-            } else if ratio > 0.0 {
-                ("o", Style::default().fg(Color::DarkGray))
-            } else {
-                (" ", Style::default())
+            let (ch, style) = match ratio {
+                r if r >= 1.0 => ("#", cached_style),
+                r if r >= 0.75 => ("+", cached_style),
+                r if r >= 0.50 => ("=", Style::default().fg(Color::Cyan)),
+                r if r >= 0.25 => ("-", Style::default().fg(Color::DarkGray)),
+                r if r > 0.0 => (".", Style::default().fg(Color::DarkGray)),
+                _ => (" ", Style::default()),
             };
             spans.push(Span::styled(ch, style));
         }
-        // Pad if buckets < inner_width (when total_pages < inner_width)
-        for _ in buckets.len()..inner_width {
-            spans.push(Span::raw(" "));
-        }
         spans.push(Span::styled("]", Style::default().fg(Color::DarkGray)));
-        Paragraph::new(Line::from(spans)).render(chunks[1], buf);
     }
 
-    // Render counter
-    Paragraph::new(Span::styled(
-        format!(" {counter}"),
-        Style::default().fg(Color::DarkGray),
-    ))
-    .render(chunks[2], buf);
+    spans.push(Span::styled(counter, Style::default().fg(Color::DarkGray)));
+
+    Line::from(spans).render(area, buf);
 }
 
 /// Truncate a path to fit within `max_width`, using a leading ellipsis if needed.
@@ -131,7 +139,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let files: Vec<&FileState> = vec![];
         terminal
-            .draw(|frame| render_refs(frame, &files, 4))
+            .draw(|frame| render_refs_to_buf(&files, 4, frame.area(), frame.buffer_mut()))
             .unwrap();
         let content = buffer_to_string(terminal.backend().buffer());
         assert!(content.trim().is_empty());
@@ -154,7 +162,7 @@ mod tests {
         let backend = TestBackend::new(80, 4);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_refs(frame, &files, 4))
+            .draw(|frame| render_refs_to_buf(&files, 4, frame.area(), frame.buffer_mut()))
             .unwrap();
         let content = buffer_to_string(terminal.backend().buffer());
         assert!(content.contains("test.bin"));
@@ -184,7 +192,7 @@ mod tests {
         let backend = TestBackend::new(80, 4);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_refs(frame, &files, 4))
+            .draw(|frame| render_refs_to_buf(&files, 4, frame.area(), frame.buffer_mut()))
             .unwrap();
         let buf = terminal.backend().buffer().clone();
         let row0: String = (0..buf.area.width)
@@ -225,7 +233,7 @@ mod tests {
         let backend = TestBackend::new(80, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_file_row(frame, &file, frame.area()))
+            .draw(|frame| render_file_row_to_buf(&file, frame.area(), frame.buffer_mut()))
             .unwrap();
         let content = buffer_to_string(terminal.backend().buffer());
         assert!(content.contains("\u{2713}"), "expected checkmark in output");
@@ -257,11 +265,11 @@ mod tests {
         let backend = TestBackend::new(80, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_file_row(frame, &file, frame.area()))
+            .draw(|frame| render_file_row_to_buf(&file, frame.area(), frame.buffer_mut()))
             .unwrap();
         let content = buffer_to_string(terminal.backend().buffer());
-        // Should contain O's for cached region and spaces for uncached
-        assert!(content.contains('O'));
+        // Should contain bar chars for cached region and spaces for uncached
+        assert!(content.contains('#') || content.contains('+'));
         assert!(content.contains("50/100"));
     }
 
@@ -284,5 +292,33 @@ mod tests {
         assert_eq!(buckets[2], (1, 2));
         assert_eq!(buckets[3], (0, 2));
         assert_eq!(buckets[4], (0, 2));
+    }
+
+    #[test]
+    fn test_bucketize_single_page_not_loaded() {
+        let file = FileState {
+            path: "t".to_string(),
+            total_pages: 1,
+            pages_in_core: 0,
+            residency: vec![false],
+            done: false,
+        };
+        let buckets = file.bucketize(1);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0], (0, 1));
+    }
+
+    #[test]
+    fn test_bucketize_single_page_loaded() {
+        let file = FileState {
+            path: "t".to_string(),
+            total_pages: 1,
+            pages_in_core: 1,
+            residency: vec![true],
+            done: false,
+        };
+        let buckets = file.bucketize(1);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0], (1, 1));
     }
 }

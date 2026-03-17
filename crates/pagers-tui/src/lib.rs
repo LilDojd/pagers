@@ -1,6 +1,7 @@
 mod app;
 mod event;
 mod state;
+mod stats;
 mod ui;
 
 pub use app::App;
@@ -9,24 +10,39 @@ pub use state::FileState;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::time::Instant;
 
 use color_eyre::Result;
 use pagers_core::events::Event as CoreEvent;
-use ratatui::layout::{Constraint, Layout};
+use pagers_core::ops::Stats;
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use ratatui::{TerminalOptions, Viewport};
 
 /// Maximum number of file rows to display.
-const MAX_DISPLAY_FILES: u16 = 16;
+const MAX_DISPLAY_FILES: u16 = 8;
+const MAX_DISPLAY_PAGES: usize = 32;
 
-pub fn run(rx: mpsc::Receiver<CoreEvent>, term: Arc<AtomicBool>) -> Result<()> {
+pub fn run(
+    rx: mpsc::Receiver<CoreEvent>,
+    term: Arc<AtomicBool>,
+    core_stats: Arc<Stats>,
+    mode: String,
+    start: Instant,
+) -> Result<()> {
     color_eyre::install()?;
 
-    let (_, term_height) = crossterm::terminal::size()?;
-    let viewport_height = (term_height / 2).clamp(4, MAX_DISPLAY_FILES);
+    let viewport_height = MAX_DISPLAY_FILES + stats::SUMMARY_LINES;
 
-    let mut terminal = ratatui::init_with_options(TerminalOptions {
-        viewport: Viewport::Inline(viewport_height),
-    });
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(std::io::stdout(), crossterm::cursor::Hide)?;
+    let backend = CrosstermBackend::new(std::io::stdout());
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(viewport_height),
+        },
+    )?;
 
     let tui_rx = event::spawn_event_threads(rx, term);
     let mut app = App::new();
@@ -64,8 +80,19 @@ pub fn run(rx: mpsc::Receiver<CoreEvent>, term: Arc<AtomicBool>) -> Result<()> {
         }
 
         if needs_draw {
-            let files = app.files();
-            terminal.draw(|frame| ui::render_refs(frame, &files, viewport_height))?;
+            let elapsed = start.elapsed().as_secs_f64();
+            let files = app.visible_files(MAX_DISPLAY_FILES as usize);
+            terminal.draw(|frame| {
+                ui::render_viewport(
+                    &files,
+                    MAX_DISPLAY_FILES,
+                    &core_stats,
+                    elapsed,
+                    &mode,
+                    frame.area(),
+                    frame.buffer_mut(),
+                );
+            })?;
         }
 
         if done.load(Ordering::Relaxed) || quit.load(Ordering::Relaxed) {
@@ -73,22 +100,27 @@ pub fn run(rx: mpsc::Receiver<CoreEvent>, term: Arc<AtomicBool>) -> Result<()> {
         }
     }
 
-    ratatui::restore();
+    if !quit.load(Ordering::Relaxed) {
+        let elapsed = start.elapsed().as_secs_f64();
+        let files = app.visible_files(MAX_DISPLAY_FILES as usize);
+        let n = files.len().min(MAX_DISPLAY_FILES as usize) as u16;
+        let total_lines = n + stats::SUMMARY_LINES;
 
-    if !(quit.load(Ordering::Relaxed) || done.load(Ordering::Relaxed)) {
-        let files = app.into_files();
-        let n = files.len().min(viewport_height as usize) as u16;
-        if n > 0 {
-            let _ = terminal.insert_before(n, |buf| {
-                let areas =
-                    Layout::vertical(files.iter().take(n as usize).map(|_| Constraint::Length(1)))
-                        .split(buf.area);
-                for (i, file) in files.iter().take(n as usize).enumerate() {
-                    ui::render_file_row_to_buf(file, areas[i], buf);
-                }
-            });
-        }
+        let _ = terminal.insert_before(total_lines, |buf| {
+            ui::render_viewport(
+                &files,
+                MAX_DISPLAY_FILES,
+                &core_stats,
+                elapsed,
+                &mode,
+                buf.area,
+                buf,
+            );
+        });
     }
+
+    crossterm::execute!(std::io::stdout(), crossterm::cursor::Show)?;
+    crossterm::terminal::disable_raw_mode()?;
 
     Ok(())
 }

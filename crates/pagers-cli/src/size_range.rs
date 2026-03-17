@@ -60,11 +60,11 @@ pub fn parse_size(src: &str) -> Result<u64, RangeError> {
         UnitSystem::Decimal
     };
 
-    if let [init @ .., prefix] = src {
-        if let Some(f) = unit_system.factor(*prefix) {
-            multiply = f;
-            src = init;
-        }
+    if let [init @ .., prefix] = src
+        && let Some(f) = unit_system.factor(*prefix)
+    {
+        multiply = f;
+        src = init;
     }
 
     parse_with_multiply(src, multiply)
@@ -216,10 +216,10 @@ impl FromStr for SizeRange {
                 Some(parse_size(right)?)
             };
 
-            if let Some(end) = end_b {
-                if end <= start_b {
-                    return Err(RangeError::RangeInverted);
-                }
+            if let Some(end) = end_b
+                && end <= start_b
+            {
+                return Err(RangeError::RangeInverted);
             }
 
             Ok(SizeRange { start_b, end_b })
@@ -243,8 +243,8 @@ fn try_split(s: &str) -> Option<(&str, &str)> {
     }
 
     // A leading dash means open-start range: "-20G" => ("", "20G")
-    if s.starts_with('-') {
-        return Some(("", &s[1..]));
+    if let Some(stripped) = s.strip_prefix('-') {
+        return Some(("", stripped));
     }
 
     find_dash_delimiter(s)

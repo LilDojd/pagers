@@ -52,6 +52,12 @@ pub struct Stats {
     pub total_dirs: AtomicI64,
 }
 
+impl Default for Stats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Stats {
     pub fn new() -> Self {
         Self {
@@ -63,6 +69,36 @@ impl Stats {
     }
 }
 
+pub fn send_file_start(path: &Path, range: &FileRange, tx: &Sender<Event>) -> anyhow::Result<()> {
+    let file = File::open(path)?;
+    let file_len = file.metadata()?.len();
+    if file_len == 0 {
+        return Ok(());
+    }
+    let offset = range.offset;
+    if offset >= file_len {
+        return Ok(());
+    }
+    let len_of_range = match range.max_len {
+        Some(max) if (offset + max) < file_len => max as usize,
+        _ => (file_len - offset) as usize,
+    };
+    let pages_in_range = len_of_range.div_ceil(mmap::page_size());
+    let mmap = unsafe {
+        MmapOptions::new()
+            .offset(offset)
+            .len(len_of_range)
+            .map(&file)?
+    };
+    let residency = mmap::mincore_residency(&mmap, len_of_range)?;
+    let _ = tx.send(Event::FileStart {
+        path: path.display().to_string(),
+        total_pages: pages_in_range,
+        residency,
+    });
+    Ok(())
+}
+
 /// Process a single file with the given operation.
 /// Returns `None` for empty files, `Some(output)` otherwise.
 pub fn process_file<O: Op>(
@@ -71,6 +107,7 @@ pub fn process_file<O: Op>(
     range: &FileRange,
     stats: &Stats,
     events: Option<&Sender<Event>>,
+    discovered: bool,
 ) -> anyhow::Result<Option<O::Output>> {
     let file = File::open(path)?;
     let metadata = file.metadata()?;
@@ -111,7 +148,9 @@ pub fn process_file<O: Op>(
         .total_pages_in_core
         .fetch_add(pages_in_core, Ordering::Relaxed);
 
-    if let Some(tx) = events {
+    if let Some(tx) = events
+        && !discovered
+    {
         let _ = tx.send(Event::FileStart {
             path: path.display().to_string(),
             total_pages: pages_in_range,
@@ -142,6 +181,7 @@ pub fn process_file<O: Op>(
             path: path.display().to_string(),
             pages_in_core: final_in_core as usize,
             total_pages: pages_in_range,
+            residency: final_residency,
         });
     }
 

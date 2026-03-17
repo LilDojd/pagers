@@ -1,6 +1,6 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -22,12 +22,31 @@ pub(crate) fn spawn_event_threads(
     let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent>();
 
     // Polls the termination flag set by signal-hook in the CLI crate.
+    let signal_term = Arc::clone(&term);
     let signal_tx = tui_tx.clone();
     thread::spawn(move || {
-        while !term.load(Ordering::Relaxed) {
+        while !signal_term.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(50));
         }
         let _ = signal_tx.send(TuiEvent::Quit);
+    });
+
+    // Raw mode swallows SIGINT, so poll for Ctrl+C as a keypress.
+    let key_tx = tui_tx.clone();
+    thread::spawn(move || {
+        loop {
+            if crossterm::event::poll(Duration::from_millis(100)).unwrap_or(false)
+                && let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
+                && key.code == crossterm::event::KeyCode::Char('c')
+                && key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+            {
+                term.store(true, Ordering::Relaxed);
+                let _ = key_tx.send(TuiEvent::Quit);
+                return;
+            }
+        }
     });
 
     let core_tx = tui_tx;
