@@ -2,6 +2,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 
+// Only include `size_range` for normal builds (not when compiling `build.rs` where
+// the module machinery does not work)
+#[cfg(pagers_normal_build)]
+use crate::{SizeRange, parse_range, parse_size};
+
 /// Fast page cache control
 #[derive(Parser, Debug)]
 #[command(name = "pagers", version, arg_required_else_help = true)]
@@ -55,9 +60,9 @@ pub struct CommonArgs {
     #[arg(short = 'm', long, value_parser = parse_size)]
     pub max_file_size: Option<u64>,
 
-    /// Byte range (e.g. 0-1G, 100M-500M)
-    #[arg(short = 'p', long)]
-    pub range: Option<String>,
+    /// Byte range (e.g. 10K-20G, 100M..500M, 0,1G)
+    #[arg(short = 'p', long, value_parser = parse_range)]
+    pub range: Option<SizeRange>,
 
     /// Ignore files matching glob pattern
     #[arg(short = 'i', long)]
@@ -138,29 +143,6 @@ pub struct LockArgs {
 pub enum OutputFormat {
     /// Key=value pairs
     Kv,
-}
-
-pub fn parse_size(s: &str) -> Result<u64, String> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Err("empty size".to_string());
-    }
-
-    let (num_str, multiplier) = match s.as_bytes().last() {
-        Some(b'k' | b'K') => (&s[..s.len() - 1], 1024u64),
-        Some(b'm' | b'M') => (&s[..s.len() - 1], 1024 * 1024),
-        Some(b'g' | b'G') => (&s[..s.len() - 1], 1024 * 1024 * 1024),
-        _ => (s, 1u64),
-    };
-
-    let val: f64 = num_str
-        .parse()
-        .map_err(|e| format!("bad size '{s}': {e}"))?;
-    if val < 0.0 {
-        return Err("size must be positive".to_string());
-    }
-
-    Ok((val * multiplier as f64) as u64)
 }
 
 fn styles() -> clap::builder::Styles {

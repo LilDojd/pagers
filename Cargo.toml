@@ -17,3 +17,5 @@ memmap2 = "0.9"
 pagers-core = { path = "crates/pagers-core" }
 rayon = "1.11"
 tempfile = "3"
+thiserror = "2"
+

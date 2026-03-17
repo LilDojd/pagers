@@ -167,26 +167,34 @@ fn test_touch_then_query_shows_resident() {
     assert!(stdout.contains("ResidentPercent=100"), "expected 100% resident, got: {stdout}");
 }
 
+fn build_out_dir() -> std::path::PathBuf {
+    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_pagers"));
+    let profile_dir = bin.parent().unwrap();
+    let build_dir = profile_dir.join("build");
+    for entry in fs::read_dir(&build_dir).expect("build dir not found") {
+        let entry = entry.unwrap();
+        if entry.file_name().to_string_lossy().starts_with("pagers-") {
+            let out = entry.path().join("out");
+            if out.join("_pagers").exists() {
+                return out;
+            }
+        }
+    }
+    panic!("completion files not found in {}", build_dir.display());
+}
+
 #[test]
 fn test_completions_zsh() {
-    let output = pagers_bin()
-        .args(["completions", "zsh"])
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("#compdef pagers"), "stdout: {stdout}");
+    let dir = build_out_dir();
+    let content = fs::read_to_string(dir.join("_pagers"))
+        .expect("zsh completion file not generated");
+    assert!(content.contains("#compdef pagers"), "content: {content}");
 }
 
 #[test]
 fn test_completions_bash() {
-    let output = pagers_bin()
-        .args(["completions", "bash"])
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("pagers"), "stdout: {stdout}");
+    let dir = build_out_dir();
+    let content = fs::read_to_string(dir.join("pagers.bash"))
+        .expect("bash completion file not generated");
+    assert!(content.contains("pagers"), "content: {content}");
 }

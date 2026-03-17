@@ -1,9 +1,10 @@
 use clap::CommandFactory;
-use clap_complete::{generate_to, Shell};
+use clap_complete::{Shell, generate_to};
 use clap_mangen::Man;
 use std::fs;
 
 include!("src/cli.rs");
+include!("src/size_range.rs");
 
 fn main() {
     let var = std::env::var_os("SHELL_COMPLETIONS_DIR").or_else(|| std::env::var_os("OUT_DIR"));
@@ -38,8 +39,9 @@ fn main() {
         man.render(&mut buffer)
             .expect("Subcommand man page generation failed");
 
-        let man_path =
-            std::path::Path::new(&outdir).join(format!("pagers-{subcommand_name}.1"));
+        let man_path = std::path::Path::new(&outdir).join(format!("pagers-{subcommand_name}.1"));
         fs::write(man_path, buffer).expect("Failed to write subcommand man page");
     }
+
+    println!("cargo:rustc-cfg=pagers_normal_build");
 }

@@ -6,46 +6,9 @@ use pagers_core::{crawl, mmap, ops, output};
 use clap::Parser;
 
 mod cli;
+pub mod size_range;
 use cli::*;
-
-fn parse_range(s: &str) -> (u64, Option<u64>) {
-    let page_size = mmap::page_size() as u64;
-
-    if let Some((lower, upper)) = s.split_once('-') {
-        let lower_val = if lower.is_empty() {
-            0
-        } else {
-            parse_size(lower).unwrap_or_else(|e| {
-                eprintln!("pagers: bad range: {e}");
-                std::process::exit(1);
-            })
-        };
-        let upper_val = if upper.is_empty() {
-            None
-        } else {
-            Some(parse_size(upper).unwrap_or_else(|e| {
-                eprintln!("pagers: bad range: {e}");
-                std::process::exit(1);
-            }))
-        };
-
-        let offset = (lower_val / page_size) * page_size;
-        let max_len = upper_val.map(|u| {
-            if u <= offset {
-                eprintln!("pagers: range limits out of order");
-                std::process::exit(1);
-            }
-            u - offset
-        });
-        (offset, max_len)
-    } else {
-        let val = parse_size(s).unwrap_or_else(|e| {
-            eprintln!("pagers: bad range: {e}");
-            std::process::exit(1);
-        });
-        (0, Some(val))
-    }
-}
+use size_range::{SizeRange, parse_range, parse_size};
 
 trait Executable {
     fn execute(&self);
@@ -75,17 +38,30 @@ fn set_threads(n: usize) {
         .ok();
 }
 
-fn run_crawl(common: &CommonArgs, mode: &str, operation: ops::Operation) -> (ops::Stats, Vec<ops::LockedFile>) {
+fn run_crawl(
+    common: &CommonArgs,
+    mode: &str,
+    operation: ops::Operation,
+) -> (ops::Stats, Vec<ops::LockedFile>) {
     if common.quiet && common.verbose > 0 {
         eprintln!("pagers: --quiet and --verbose are mutually exclusive");
         std::process::exit(1);
     }
 
-    let (offset, max_len) = common
-        .range
-        .as_deref()
-        .map(parse_range)
-        .unwrap_or((0, None));
+    let (offset, max_len) = if let Some(ref range) = common.range {
+        let page_size = mmap::page_size() as u64;
+        let aligned = (range.start_b / page_size) * page_size;
+        let max_len = range.end_b.map(|end| {
+            if end <= aligned {
+                eprintln!("pagers: range limits out of order after page alignment");
+                std::process::exit(1);
+            }
+            end - aligned
+        });
+        (aligned, max_len)
+    } else {
+        (0, None)
+    };
 
     let op_config = ops::OpConfig {
         operation,
@@ -125,17 +101,23 @@ fn run_crawl(common: &CommonArgs, mode: &str, operation: ops::Operation) -> (ops
 
 impl Executable for CrawlOp<'_> {
     fn execute(&self) {
-        if let Some(n) = self.threads { set_threads(n); }
+        if let Some(n) = self.threads {
+            set_threads(n);
+        }
         run_crawl(self.common, self.mode, self.operation);
     }
 }
 
 impl Executable for DaemonOp<'_> {
     fn execute(&self) {
-        if let Some(n) = self.threads { set_threads(n); }
+        if let Some(n) = self.threads {
+            set_threads(n);
+        }
         let (stats, locked_files) = run_crawl(self.common, self.mode, self.operation);
 
-        if self.lockall && let Err(e) = mmap::mlockall_current() {
+        if self.lockall
+            && let Err(e) = mmap::mlockall_current()
+        {
             eprintln!("pagers: FATAL: {e}");
             std::process::exit(1);
         }

@@ -13,12 +13,17 @@ clap = { workspace = true, features = ["derive", "color", "help", "usage", "erro
 anstyle = { workspace = true }
 libc = { workspace = true }
 rayon = { workspace = true }
+thiserror = { workspace = true }
 
 [build-dependencies]
 clap = { workspace = true, features = ["derive", "color", "help", "usage", "error-context"] }
 clap_complete = { workspace = true }
 clap_mangen = { workspace = true }
 anstyle = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(pagers_normal_build)'] }
