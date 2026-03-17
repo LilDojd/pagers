@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 memmap2 = { workspace = true }
 libc = { workspace = true }
+nix = { workspace = true }
 rayon = { workspace = true }
 ignore = { workspace = true }
 dashmap = { workspace = true }
