@@ -34,16 +34,6 @@ pub fn advise_willneed(mmap: &Mmap, offset: usize, len: usize) -> std::io::Resul
     mmap.advise_range(Advice::WillNeed, offset, len)
 }
 
-/// Evict pages using posix_fadvise (Linux only — macOS uses msync at ops layer).
-#[cfg(target_os = "linux")]
-pub fn evict(fd: i32, offset: i64, len: i64) -> std::io::Result<()> {
-    let ret = unsafe { libc::posix_fadvise(fd, offset, len, libc::POSIX_FADV_DONTNEED) };
-    if ret != 0 {
-        return Err(std::io::Error::from_raw_os_error(ret));
-    }
-    Ok(())
-}
-
 /// Lock pages in physical memory.
 pub fn mlock(mmap: &Mmap, len: usize) -> std::io::Result<()> {
     let ret = unsafe { libc::mlock(mmap.as_ptr() as *const libc::c_void, len) };

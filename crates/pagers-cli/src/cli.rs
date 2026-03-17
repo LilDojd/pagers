@@ -16,18 +16,58 @@ pub struct Cli {
     pub command: Command,
 }
 
+#[derive(clap::Args, Debug)]
+pub struct WithCommon<T: clap::Args> {
+    #[command(flatten)]
+    pub common: CommonArgs,
+
+    #[command(flatten)]
+    pub inner: T,
+}
+
+impl<T: clap::Args> WithCommon<T> {
+    pub fn common(&self) -> &CommonArgs {
+        &self.common
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Show page cache residency
-    Query(QueryArgs),
+    Query(WithCommon<()>),
     /// Touch pages into memory
-    Touch(TouchArgs),
+    Touch(WithCommon<LoadArgs>),
     /// Evict pages from memory
-    Evict(QueryArgs),
+    Evict(WithCommon<()>),
     /// Lock pages with mlock(2)
-    Lock(LockArgs),
+    Lock(WithCommon<LockInner>),
     /// Lock all pages with mlockall(2)
-    Lockall(LockArgs),
+    Lockall(WithCommon<LockInner>),
+}
+
+impl Command {
+    pub fn common(&self) -> &CommonArgs {
+        match self {
+            Self::Query(a) | Self::Evict(a) => a.common(),
+            Self::Touch(a) => a.common(),
+            Self::Lock(a) | Self::Lockall(a) => a.common(),
+        }
+    }
+
+    pub fn verbosity(&self) -> &clap_verbosity_flag::Verbosity {
+        &self.common().verbosity
+    }
+}
+
+#[derive(Clone, clap::Args, Debug)]
+pub struct FilterArgs {
+    /// Ignore files matching glob pattern
+    #[arg(short = 'i', long)]
+    pub ignore: Vec<String>,
+
+    /// Only process files matching glob pattern
+    #[arg(short = 'I', long = "filter")]
+    pub filter: Vec<String>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -48,13 +88,8 @@ pub struct CommonArgs {
     #[arg(short = 'H')]
     pub count_hardlinks: bool,
 
-    /// Quiet mode
-    #[arg(short, long)]
-    pub quiet: bool,
-
-    /// Verbose (repeatable)
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    pub verbose: u8,
+    #[command(flatten)]
+    pub verbosity: clap_verbosity_flag::Verbosity,
 
     /// Max file size (e.g. 4k, 100M, 1.5G)
     #[arg(short = 'm', long, value_parser = parse_size)]
@@ -64,13 +99,8 @@ pub struct CommonArgs {
     #[arg(short = 'p', long, value_parser = clap::value_parser!(SizeRange))]
     pub range: Option<SizeRange>,
 
-    /// Ignore files matching glob pattern
-    #[arg(short = 'i', long)]
-    pub ignore: Vec<String>,
-
-    /// Only process files matching glob pattern
-    #[arg(short = 'I', long = "filter")]
-    pub filter: Vec<String>,
+    #[command(flatten)]
+    pub filter: FilterArgs,
 
     /// Read paths from file (- for stdin)
     #[arg(short = 'b', long, value_hint = ValueHint::FilePath)]
@@ -86,23 +116,14 @@ pub struct CommonArgs {
 }
 
 #[derive(clap::Args, Debug)]
-pub struct QueryArgs {
-    #[command(flatten)]
-    pub common: CommonArgs,
-}
-
-#[derive(clap::Args, Debug)]
-pub struct TouchArgs {
-    #[command(flatten)]
-    pub common: CommonArgs,
-
+pub struct LoadArgs {
     /// Chunk size for parallel madvise (e.g. 128M)
     #[arg(long, default_value = "128M", value_parser = parse_size)]
     pub chunk_size: u64,
 
     /// Max seconds to wait for madvise convergence
     #[arg(long, default_value = "30")]
-    pub timeout: u64,
+    pub timeout: f64,
 
     /// Thread pool size (default: num CPUs)
     #[arg(long)]
@@ -110,21 +131,9 @@ pub struct TouchArgs {
 }
 
 #[derive(clap::Args, Debug)]
-pub struct LockArgs {
+pub struct LockInner {
     #[command(flatten)]
-    pub common: CommonArgs,
-
-    /// Chunk size for parallel madvise (e.g. 128M)
-    #[arg(long, default_value = "128M", value_parser = parse_size)]
-    pub chunk_size: u64,
-
-    /// Max seconds to wait for madvise convergence
-    #[arg(long, default_value = "30")]
-    pub timeout: u64,
-
-    /// Thread pool size (default: num CPUs)
-    #[arg(long)]
-    pub threads: Option<usize>,
+    pub load: LoadArgs,
 
     /// Run as daemon (block until signal)
     #[arg(short, long)]

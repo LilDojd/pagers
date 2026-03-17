@@ -22,7 +22,6 @@ impl App {
         Self::default()
     }
 
-    /// Process a TUI event, updating state. Returns what the run loop should do.
     pub(crate) fn handle_event(&mut self, event: TuiEvent) -> ControlFlow {
         match event {
             TuiEvent::Core(CoreEvent::FileStart {
@@ -37,6 +36,7 @@ impl App {
                     path,
                     total_pages,
                     pages_in_core,
+                    residency,
                     done: false,
                 });
                 ControlFlow::Continue
@@ -45,6 +45,7 @@ impl App {
                 let pages_in_core = residency.iter().filter(|&&b| b).count();
                 if let Some(&idx) = self.file_index.get(&path) {
                     self.files[idx].pages_in_core = pages_in_core;
+                    self.files[idx].residency = residency;
                 }
                 ControlFlow::Continue
             }
@@ -64,14 +65,12 @@ impl App {
         }
     }
 
-    /// Returns files sorted by ratio (ascending) for display.
     pub fn files(&self) -> Vec<&FileState> {
         let mut sorted: Vec<&FileState> = self.files.iter().collect();
         sorted.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
         sorted
     }
 
-    /// Consume self, return owned files sorted by ratio.
     pub fn into_files(self) -> Vec<FileState> {
         let mut files = self.files;
         files.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));

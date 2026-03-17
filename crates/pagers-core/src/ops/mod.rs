@@ -1,10 +1,11 @@
 //! Per-file operations: touch, query, evict, lock.
 
+mod evict;
+mod touch;
+
 use std::fs::File;
-use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::Instant;
 
 use memmap2::{Mmap, MmapOptions};
 
@@ -32,7 +33,7 @@ impl Stats {
 #[derive(Clone, Copy)]
 pub struct TouchParams {
     pub chunk_size: usize,
-    pub timeout_secs: u64,
+    pub timeout_secs: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -45,8 +46,6 @@ pub enum Operation {
 
 pub struct OpConfig {
     pub operation: Operation,
-    pub verbose: u8,
-    pub quiet: bool,
     pub offset: u64,
     pub max_len: Option<u64>,
     pub events: Option<std::sync::mpsc::Sender<crate::events::Event>>,
@@ -94,7 +93,7 @@ pub fn process_file(
     stats.total_files.fetch_add(1, Ordering::Relaxed);
 
     if matches!(config.operation, Operation::Evict) {
-        evict_file(&file, path, offset as i64, len_of_range as i64, config)?;
+        evict::evict_file(&file, path, offset as i64, len_of_range as i64)?;
         return Ok(None);
     }
 
@@ -125,7 +124,13 @@ pub fn process_file(
     };
 
     if let Some(params) = touch_params {
-        touch_file(&mmap, len_of_range, params, &path.display().to_string(), &config.events)?;
+        touch::touch_file(
+            &mmap,
+            len_of_range,
+            params,
+            &path.display().to_string(),
+            &config.events,
+        )?;
 
         let residency_after = mmap::mincore_residency(&mmap, len_of_range)?;
         let new_in_core: i64 = residency_after.iter().filter(|r| **r).count() as i64;
@@ -164,126 +169,4 @@ pub fn process_file(
     }
 
     Ok(None)
-}
-
-/// Touch a file using chunked madvise(MADV_WILLNEED) with fallback.
-fn touch_file(
-    mmap: &Mmap,
-    len: usize,
-    params: TouchParams,
-    path: &str,
-    events: &Option<std::sync::mpsc::Sender<crate::events::Event>>,
-) -> anyhow::Result<()> {
-    let chunk_size = params.chunk_size;
-    let page_size = mmap::page_size();
-    let total_pages = len.div_ceil(page_size);
-    let timeout = std::time::Duration::from_secs(params.timeout_secs);
-    let start = Instant::now();
-
-    // Step 1: Issue madvise(MADV_WILLNEED) on all chunks
-    let chunks: Vec<(usize, usize)> = (0..len)
-        .step_by(chunk_size)
-        .map(|off| {
-            let chunk_len = (len - off).min(chunk_size);
-            (off, chunk_len)
-        })
-        .collect();
-
-    use rayon::prelude::*;
-    chunks.par_iter().for_each(|&(off, chunk_len)| {
-        if let Err(e) = mmap::advise_willneed(mmap, off, chunk_len) {
-            eprintln!("pagers: WARNING: madvise failed at offset {off}: {e}");
-        }
-    });
-
-    // Step 2: Poll residency until converged or timeout
-    loop {
-        let residency = mmap::mincore_residency(mmap, len)?;
-        let resident_count = residency.iter().filter(|r| **r).count();
-
-        if let Some(tx) = events {
-            let _ = tx.send(crate::events::Event::FileProgress {
-                path: path.to_string(),
-                residency: residency.clone(),
-            });
-        }
-
-        if resident_count == total_pages {
-            break;
-        }
-
-        if start.elapsed() >= timeout {
-            // Fallback: parallel manual touch for non-resident pages
-            let non_resident: Vec<usize> = residency
-                .iter()
-                .enumerate()
-                .filter(|&(_, r)| !r)
-                .map(|(i, _)| i)
-                .collect();
-
-            non_resident.par_iter().for_each(|&page_idx| {
-                let offset = page_idx * page_size;
-                if offset < len {
-                    unsafe {
-                        let _byte = std::ptr::read_volatile(mmap.as_ptr().add(offset));
-                    }
-                }
-            });
-
-            if let Some(tx) = events {
-                let final_residency = mmap::mincore_residency(mmap, len)?;
-                let _ = tx.send(crate::events::Event::FileProgress {
-                    path: path.to_string(),
-                    residency: final_residency,
-                });
-            }
-            break;
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-
-    Ok(())
-}
-
-/// Evict pages from cache.
-fn evict_file(
-    file: &File,
-    path: &Path,
-    offset: i64,
-    len: i64,
-    config: &OpConfig,
-) -> anyhow::Result<()> {
-    if config.verbose > 0 {
-        eprintln!("Evicting {}", path.display());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        mmap::evict(file.as_raw_fd(), offset, len)?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = file.as_raw_fd(); // suppress unused warning
-        // On macOS, mmap + msync(MS_INVALIDATE)
-        let mmap = unsafe {
-            MmapOptions::new()
-                .offset(offset as u64)
-                .len(len as usize)
-                .map(file)?
-        };
-        unsafe {
-            if libc::msync(
-                mmap.as_ptr() as *mut libc::c_void,
-                len as usize,
-                libc::MS_INVALIDATE,
-            ) != 0
-            {
-                return Err(std::io::Error::last_os_error().into());
-            }
-        }
-    }
-
-    Ok(())
 }

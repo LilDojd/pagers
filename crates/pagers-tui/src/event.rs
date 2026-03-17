@@ -13,17 +13,14 @@ pub(crate) enum TuiEvent {
 
 /// Spawns input/tick and core-forwarder threads.
 /// Returns a receiver for all TUI events.
-pub(crate) fn spawn_event_threads(
-    core_rx: mpsc::Receiver<CoreEvent>,
-) -> mpsc::Receiver<TuiEvent> {
+pub(crate) fn spawn_event_threads(core_rx: mpsc::Receiver<CoreEvent>) -> mpsc::Receiver<TuiEvent> {
     let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent>();
 
-    // Input thread: polls for Ctrl+C.
     let input_tx = tui_tx.clone();
     thread::spawn(move || {
         use crossterm::event::{self, Event, KeyCode, KeyModifiers};
         loop {
-            if event::poll(Duration::from_millis(100)).unwrap_or(false)
+            if event::poll(Duration::from_millis(50)).unwrap_or(false)
                 && let Ok(Event::Key(key)) = event::read()
                 && key.code == KeyCode::Char('c')
                 && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -34,7 +31,6 @@ pub(crate) fn spawn_event_threads(
         }
     });
 
-    // Core event forwarder thread.
     let core_tx = tui_tx;
     thread::spawn(move || {
         while let Ok(event) = core_rx.recv() {
