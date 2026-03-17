@@ -1,6 +1,8 @@
+mod event;
+mod state;
+pub use state::FileState;
+
 use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 
 use color_eyre::Result;
 use pagers_core::events::Event as CoreEvent;
@@ -10,31 +12,7 @@ use ratatui::text::Span;
 use ratatui::widgets::{LineGauge, Paragraph};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 
-/// Tracks the state of a single file being processed.
-pub struct FileState {
-    pub path: String,
-    pub total_pages: usize,
-    pub pages_in_core: usize,
-    pub done: bool,
-}
-
-impl FileState {
-    /// Returns the ratio of pages in core to total pages (0.0 to 1.0).
-    pub fn ratio(&self) -> f64 {
-        if self.total_pages == 0 {
-            return 0.0;
-        }
-        self.pages_in_core as f64 / self.total_pages as f64
-    }
-}
-
-/// Internal event type combining core events with TUI-specific events.
-enum TuiEvent {
-    Core(CoreEvent),
-    CoreDone,
-    Tick,
-    Quit,
-}
+use event::TuiEvent;
 
 /// Public entry point: creates an inline terminal and runs the event loop.
 pub fn run(rx: mpsc::Receiver<CoreEvent>) -> Result<()> {
@@ -82,39 +60,7 @@ fn run_loop<B: ratatui::backend::Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
-    let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent>();
-
-    // Input/tick thread: polls for keyboard events, sends Tick every 100ms.
-    let tick_tx = tui_tx.clone();
-    thread::spawn(move || {
-        use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-        loop {
-            if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-                if let Ok(Event::Key(key)) = event::read() {
-                    if key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        let _ = tick_tx.send(TuiEvent::Quit);
-                        break;
-                    }
-                }
-            }
-            if tick_tx.send(TuiEvent::Tick).is_err() {
-                break;
-            }
-        }
-    });
-
-    // Core event forwarder thread.
-    let core_tx = tui_tx;
-    thread::spawn(move || {
-        while let Ok(event) = rx.recv() {
-            if core_tx.send(TuiEvent::Core(event)).is_err() {
-                return;
-            }
-        }
-        let _ = core_tx.send(TuiEvent::CoreDone);
-    });
+    let tui_rx = event::spawn_event_threads(rx);
 
     let mut files: Vec<FileState> = Vec::new();
     let mut needs_redraw = true;
