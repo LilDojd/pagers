@@ -105,7 +105,9 @@ pub fn process_file(
     let page_size = mmap::page_size();
     let pages_in_range = len_of_range.div_ceil(page_size);
 
-    stats.total_pages.fetch_add(pages_in_range as i64, Ordering::Relaxed);
+    stats
+        .total_pages
+        .fetch_add(pages_in_range as i64, Ordering::Relaxed);
     stats.total_files.fetch_add(1, Ordering::Relaxed);
 
     if matches!(config.operation, Operation::Evict) {
@@ -122,7 +124,9 @@ pub fn process_file(
 
     let residency = mmap::mincore_residency(&mmap, len_of_range)?;
     let pages_in_core: i64 = residency.iter().filter(|r| **r).count() as i64;
-    stats.total_pages_in_core.fetch_add(pages_in_core, Ordering::Relaxed);
+    stats
+        .total_pages_in_core
+        .fetch_add(pages_in_core, Ordering::Relaxed);
 
     let touch_params = match config.operation {
         Operation::Touch(p) | Operation::Lock(p) => Some(p),
@@ -136,7 +140,9 @@ pub fn process_file(
         let residency_after = mmap::mincore_residency(&mmap, len_of_range)?;
         let new_in_core: i64 = residency_after.iter().filter(|r| **r).count() as i64;
         let delta = new_in_core - pages_in_core;
-        stats.total_pages_in_core.fetch_add(delta, Ordering::Relaxed);
+        stats
+            .total_pages_in_core
+            .fetch_add(delta, Ordering::Relaxed);
     }
 
     if matches!(config.operation, Operation::Lock(_)) {
@@ -210,9 +216,7 @@ fn touch_file(
                 let offset = page_idx * page_size;
                 if offset < len {
                     unsafe {
-                        let _byte = std::ptr::read_volatile(
-                            mmap.as_ptr().add(offset),
-                        );
+                        let _byte = std::ptr::read_volatile(mmap.as_ptr().add(offset));
                     }
                 }
             });
@@ -234,7 +238,13 @@ fn touch_file(
 }
 
 /// Evict pages from cache.
-fn evict_file(file: &File, path: &Path, offset: i64, len: i64, config: &OpConfig) -> anyhow::Result<()> {
+fn evict_file(
+    file: &File,
+    path: &Path,
+    offset: i64,
+    len: i64,
+    config: &OpConfig,
+) -> anyhow::Result<()> {
     if config.verbose > 0 {
         eprintln!("Evicting {}", path.display());
     }

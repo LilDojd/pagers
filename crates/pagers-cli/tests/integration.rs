@@ -19,7 +19,11 @@ fn test_query_single_file() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Files: 1"), "stdout: {stdout}");
     assert!(stdout.contains("Resident Pages:"), "stdout: {stdout}");
@@ -38,7 +42,11 @@ fn test_touch_single_file() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Touched Pages:"), "stdout: {stdout}");
 }
@@ -56,7 +64,11 @@ fn test_evict_single_file() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Evicted Pages:"), "stdout: {stdout}");
 }
@@ -75,7 +87,11 @@ fn test_query_directory() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Files: 5"), "stdout: {stdout}");
 }
@@ -93,7 +109,11 @@ fn test_kv_output() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Files=1"), "stdout: {stdout}");
     assert!(stdout.contains("TotalPages="), "stdout: {stdout}");
@@ -112,18 +132,22 @@ fn test_quiet_mode() {
         .unwrap();
 
     assert!(output.status.success());
-    assert!(output.stdout.is_empty(), "stdout should be empty in quiet mode");
+    assert!(
+        output.stdout.is_empty(),
+        "stdout should be empty in quiet mode"
+    );
 }
 
 #[test]
 fn test_no_subcommand_shows_help() {
-    let output = pagers_bin()
-        .output()
-        .unwrap();
+    let output = pagers_bin().output().unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Usage") || stderr.contains("pagers"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("Usage") || stderr.contains("pagers"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -141,9 +165,16 @@ fn test_max_file_size_filter() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Files: 1"), "should only process small file, got: {stdout}");
+    assert!(
+        stdout.contains("Files: 1"),
+        "should only process small file, got: {stdout}"
+    );
 }
 
 #[test]
@@ -164,7 +195,10 @@ fn test_touch_then_query_shows_resident() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ResidentPercent=100"), "expected 100% resident, got: {stdout}");
+    assert!(
+        stdout.contains("ResidentPercent=100"),
+        "expected 100% resident, got: {stdout}"
+    );
 }
 
 fn build_out_dir() -> std::path::PathBuf {
@@ -186,15 +220,15 @@ fn build_out_dir() -> std::path::PathBuf {
 #[test]
 fn test_completions_zsh() {
     let dir = build_out_dir();
-    let content = fs::read_to_string(dir.join("_pagers"))
-        .expect("zsh completion file not generated");
+    let content =
+        fs::read_to_string(dir.join("_pagers")).expect("zsh completion file not generated");
     assert!(content.contains("#compdef pagers"), "content: {content}");
 }
 
 #[test]
 fn test_completions_bash() {
     let dir = build_out_dir();
-    let content = fs::read_to_string(dir.join("pagers.bash"))
-        .expect("bash completion file not generated");
+    let content =
+        fs::read_to_string(dir.join("pagers.bash")).expect("bash completion file not generated");
     assert!(content.contains("pagers"), "content: {content}");
 }

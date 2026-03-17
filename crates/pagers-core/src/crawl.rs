@@ -56,8 +56,7 @@ pub fn crawl_and_process(
                 .git_exclude(false);
 
             // Add ignore overrides
-            if !crawl_config.ignore_patterns.is_empty()
-                || !crawl_config.filter_patterns.is_empty()
+            if !crawl_config.ignore_patterns.is_empty() || !crawl_config.filter_patterns.is_empty()
             {
                 let mut overrides = ignore::overrides::OverrideBuilder::new(path);
                 for pat in &crawl_config.ignore_patterns {
@@ -98,9 +97,10 @@ pub fn crawl_and_process(
                 // Max file size filter
                 if let Some(max_size) = crawl_config.max_file_size
                     && let Ok(meta) = entry_path.metadata()
-                        && meta.len() > max_size {
-                            continue;
-                        }
+                    && meta.len() > max_size
+                {
+                    continue;
+                }
 
                 // Inode dedup
                 if !crawl_config.count_hardlinks {
@@ -108,13 +108,14 @@ pub fn crawl_and_process(
                     {
                         use std::os::unix::fs::MetadataExt;
                         if let Ok(meta) = entry_path.metadata()
-                            && meta.nlink() > 1 {
-                                let key = (meta.dev(), meta.ino());
-                                if seen_inodes.contains_key(&key) {
-                                    continue;
-                                }
-                                seen_inodes.insert(key, ());
+                            && meta.nlink() > 1
+                        {
+                            let key = (meta.dev(), meta.ino());
+                            if seen_inodes.contains_key(&key) {
+                                continue;
                             }
+                            seen_inodes.insert(key, ());
+                        }
                     }
                 }
 

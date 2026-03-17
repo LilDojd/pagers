@@ -63,9 +63,7 @@ pub fn print_summary(stats: &Stats, elapsed: f64, mode: &str, output_format: Opt
                     pretty_size(total_size)
                 ),
                 _ => {
-                    print!(
-                        "  Resident Pages: {pages_in_core}/{total_pages}  ",
-                    );
+                    print!("  Resident Pages: {pages_in_core}/{total_pages}  ",);
                     print!(
                         "{}/{}  ",
                         pretty_size(in_core_size),
