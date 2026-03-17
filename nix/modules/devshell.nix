@@ -17,6 +17,7 @@
           cargo-edit
           cargo-nextest
           cargo-machete
+          cargo-autoinherit
         ];
       };
     };

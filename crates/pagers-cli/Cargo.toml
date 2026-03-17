@@ -1,0 +1,24 @@
+[package]
+name = "pagers"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "pagers"
+path = "src/main.rs"
+
+[dependencies]
+pagers-core = { workspace = true }
+clap = { workspace = true, features = ["derive", "color", "help", "usage", "error-context"] }
+anstyle = { workspace = true }
+libc = { workspace = true }
+rayon = { workspace = true }
+
+[build-dependencies]
+clap = { workspace = true, features = ["derive", "color", "help", "usage", "error-context"] }
+clap_complete = { workspace = true }
+clap_mangen = { workspace = true }
+anstyle = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
