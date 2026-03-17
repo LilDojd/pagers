@@ -8,36 +8,40 @@ name = "pagers"
 path = "src/main.rs"
 
 [dependencies]
-pagers-core = { workspace = true }
-pagers-tui = { workspace = true }
-clap = { workspace = true, features = [
+anstyle = "1.0.14"
+clap = { version = "4", features = [
   "derive",
   "color",
   "help",
   "usage",
   "error-context",
 ] }
-anstyle = { workspace = true }
-libc = { workspace = true }
+clap-verbosity-flag = { version = "3.0.4", default-features = false, features = [
+  "tracing",
+] }
+pagers-core = { workspace = true }
+pagers-tui = { path = "../pagers-tui" }
 rayon = { workspace = true }
-thiserror = { workspace = true }
-clap-verbosity-flag = { version = "3.0.4", default-features = false, features = ["tracing"] }
-tracing = "0.1.44"
+signal-hook = { version = "0.3", features = ["iterator"] }
+thiserror = "2"
+tracing = { workspace = true }
 tracing-subscriber = "0.3.23"
 
 [build-dependencies]
-clap = { workspace = true, features = [
+anstyle = "1.0.14"
+clap = { version = "4", features = [
   "derive",
   "color",
   "help",
   "usage",
   "error-context",
 ] }
-clap_complete = { workspace = true }
-clap_mangen = { workspace = true }
-clap-verbosity-flag = { version = "3.0.4", default-features = false, features = ["tracing"] }
-anstyle = { workspace = true }
-thiserror = { workspace = true }
+clap_complete = "4"
+clap_mangen = "0.2"
+clap-verbosity-flag = { version = "3.0.4", default-features = false, features = [
+  "tracing",
+] }
+thiserror = "2"
 
 [dev-dependencies]
 tempfile = { workspace = true }

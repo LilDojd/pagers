@@ -157,5 +157,4 @@ mod tests {
         let flow = app.handle_event(TuiEvent::Quit);
         assert!(matches!(flow, ControlFlow::Quit));
     }
-
 }

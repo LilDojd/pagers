@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::state::FileState;
 
@@ -110,9 +110,9 @@ pub(crate) fn truncate_path(path: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::Terminal;
 
     fn buffer_to_string(buf: &Buffer) -> String {
         let mut s = String::new();

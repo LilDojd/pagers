@@ -2,8 +2,8 @@
 
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 
 use dashmap::DashMap;
 use ignore::WalkBuilder;

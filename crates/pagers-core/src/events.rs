@@ -9,10 +9,7 @@ pub enum Event {
         residency: Vec<bool>,
     },
     /// Residency update during touch/lock polling.
-    FileProgress {
-        path: String,
-        residency: Vec<bool>,
-    },
+    FileProgress { path: String, residency: Vec<bool> },
     /// File processing complete.
     FileDone {
         path: String,

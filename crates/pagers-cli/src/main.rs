@@ -117,9 +117,7 @@ where
 
 fn daemon_wait(stats: &ops::Stats, inner: &LockInner) {
     let page_size = mmap::page_size() as i64;
-    let total = stats
-        .total_pages
-        .load(std::sync::atomic::Ordering::Relaxed);
+    let total = stats.total_pages.load(std::sync::atomic::Ordering::Relaxed);
     ::tracing::info!(
         "LOCKED {} pages ({})",
         total,
@@ -133,15 +131,12 @@ fn daemon_wait(stats: &ops::Stats, inner: &LockInner) {
             ::tracing::warn!("pidfile: {e}");
         }
 
-        let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
-        unsafe {
-            libc::sigemptyset(&mut set);
-            libc::sigaddset(&mut set, libc::SIGINT);
-            libc::sigaddset(&mut set, libc::SIGTERM);
-            libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-            let mut sig: libc::c_int = 0;
-            libc::sigwait(&set, &mut sig);
-        }
+        let mut signals = signal_hook::iterator::Signals::new([
+            signal_hook::consts::SIGINT,
+            signal_hook::consts::SIGTERM,
+        ])
+        .expect("signal hook");
+        signals.forever().next();
 
         if let Some(p) = &inner.pidfile {
             let _ = std::fs::remove_file(p);

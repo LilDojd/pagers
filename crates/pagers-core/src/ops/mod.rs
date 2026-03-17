@@ -7,9 +7,9 @@ mod touch;
 
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 
 use memmap2::{Mmap, MmapOptions};
 
