@@ -8,7 +8,7 @@ use clap::Parser;
 mod cli;
 pub mod size_range;
 use cli::*;
-use size_range::{SizeRange, parse_range, parse_size};
+use size_range::{SizeRange, parse_size};
 
 trait Executable {
     fn execute(&self);

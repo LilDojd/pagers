@@ -233,10 +233,6 @@ impl FromStr for SizeRange {
     }
 }
 
-pub fn parse_range(src: &str) -> Result<SizeRange, RangeError> {
-    SizeRange::from_str(src)
-}
-
 fn try_split(s: &str) -> Option<(&str, &str)> {
     if let Some(pos) = s.find("..") {
         return Some((&s[..pos], &s[pos + 2..]));

@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 // Only include `size_range` for normal builds (not when compiling `build.rs` where
 // the module machinery does not work)
 #[cfg(pagers_normal_build)]
-use crate::{SizeRange, parse_range, parse_size};
+use crate::{SizeRange, parse_size};
 
 /// Fast page cache control
 #[derive(Parser, Debug)]
@@ -61,7 +61,7 @@ pub struct CommonArgs {
     pub max_file_size: Option<u64>,
 
     /// Byte range (e.g. 10K-20G, 100M..500M, 0,1G)
-    #[arg(short = 'p', long, value_parser = parse_range)]
+    #[arg(short = 'p', long, value_parser = clap::value_parser!(SizeRange))]
     pub range: Option<SizeRange>,
 
     /// Ignore files matching glob pattern
