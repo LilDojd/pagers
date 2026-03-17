@@ -6,6 +6,7 @@ mod ui;
 pub use app::App;
 pub use state::FileState;
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
@@ -17,7 +18,7 @@ use ratatui::{TerminalOptions, Viewport};
 /// Maximum number of file rows to display.
 const MAX_DISPLAY_FILES: u16 = 16;
 
-pub fn run(rx: mpsc::Receiver<CoreEvent>) -> Result<()> {
+pub fn run(rx: mpsc::Receiver<CoreEvent>, term: Arc<AtomicBool>) -> Result<()> {
     color_eyre::install()?;
 
     let (_, term_height) = crossterm::terminal::size()?;
@@ -27,7 +28,7 @@ pub fn run(rx: mpsc::Receiver<CoreEvent>) -> Result<()> {
         viewport: Viewport::Inline(viewport_height),
     });
 
-    let tui_rx = event::spawn_event_threads(rx);
+    let tui_rx = event::spawn_event_threads(rx, term);
     let mut app = App::new();
     let quit = AtomicBool::new(false);
     let done = AtomicBool::new(false);

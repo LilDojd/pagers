@@ -3,6 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.dependencies]
+nix = "0.31"
 pagers-core = { path = "crates/pagers-core" }
 rayon = "1.11"
 tempfile = "3"

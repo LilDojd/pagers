@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -11,24 +13,21 @@ pub(crate) enum TuiEvent {
     Quit,
 }
 
-/// Spawns input/tick and core-forwarder threads.
+/// Spawns signal-watcher and core-forwarder threads.
 /// Returns a receiver for all TUI events.
-pub(crate) fn spawn_event_threads(core_rx: mpsc::Receiver<CoreEvent>) -> mpsc::Receiver<TuiEvent> {
+pub(crate) fn spawn_event_threads(
+    core_rx: mpsc::Receiver<CoreEvent>,
+    term: Arc<AtomicBool>,
+) -> mpsc::Receiver<TuiEvent> {
     let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent>();
 
-    let input_tx = tui_tx.clone();
+    // Polls the termination flag set by signal-hook in the CLI crate.
+    let signal_tx = tui_tx.clone();
     thread::spawn(move || {
-        use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-        loop {
-            if event::poll(Duration::from_millis(50)).unwrap_or(false)
-                && let Ok(Event::Key(key)) = event::read()
-                && key.code == KeyCode::Char('c')
-                && key.modifiers.contains(KeyModifiers::CONTROL)
-            {
-                let _ = input_tx.send(TuiEvent::Quit);
-                break;
-            }
+        while !term.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(50));
         }
+        let _ = signal_tx.send(TuiEvent::Quit);
     });
 
     let core_tx = tui_tx;

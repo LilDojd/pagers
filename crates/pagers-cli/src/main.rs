@@ -1,4 +1,6 @@
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use pagers_core::{crawl, mmap, ops, output};
@@ -22,6 +24,7 @@ fn run<O: ops::Op + Send + 'static>(
     op: O,
     common: &CommonArgs,
     tui: bool,
+    term: &Arc<AtomicBool>,
 ) -> (Arc<ops::Stats>, Vec<O::Output>)
 where
     O::Output: 'static,
@@ -65,25 +68,25 @@ where
     let start = Instant::now();
 
     let outputs = if let Some(events_rx) = events_rx {
-        let paths = common.paths.clone();
-        let crawl_stats = Arc::clone(&stats);
-        let crawl_handle = std::thread::spawn(move || {
-            let outputs = crawl::crawl_and_process(
-                &paths,
-                &crawl_config,
-                &op,
-                &range,
-                &crawl_stats,
-                events_tx.as_ref(),
-            );
-            outputs
+        let term_clone = Arc::clone(term);
+        let tui_handle = std::thread::spawn(move || {
+            if let Err(e) = pagers_tui::run(events_rx, term_clone) {
+                ::tracing::error!("TUI error: {e}");
+            }
         });
 
-        if let Err(e) = pagers_tui::run(events_rx) {
-            ::tracing::error!("TUI error: {e}");
-        }
+        let outputs = crawl::crawl_and_process(
+            &common.paths,
+            &crawl_config,
+            &op,
+            &range,
+            &stats,
+            events_tx.as_ref(),
+        );
+        drop(events_tx);
 
-        crawl_handle.join().expect("crawl thread panicked")
+        tui_handle.join().expect("TUI thread panicked");
+        outputs
     } else {
         let outputs = crawl::crawl_and_process(
             &common.paths,
@@ -115,7 +118,72 @@ where
     (stats, outputs)
 }
 
-fn daemon_wait(stats: &ops::Stats, inner: &LockInner) {
+fn go_daemon(wait: bool) -> Option<OwnedFd> {
+    let pipe = if wait {
+        Some(nix::unistd::pipe().expect("pipe"))
+    } else {
+        None
+    };
+
+    match unsafe { nix::unistd::fork() }.expect("fork") {
+        nix::unistd::ForkResult::Parent { child: _ } => {
+            if let Some((read_fd, _)) = pipe {
+                wait_for_child(read_fd);
+            }
+            std::process::exit(0);
+        }
+        nix::unistd::ForkResult::Child => {
+            nix::unistd::setsid().expect("setsid");
+            if let Some((_, write_fd)) = pipe {
+                Some(write_fd)
+            } else {
+                redirect_stdio();
+                None
+            }
+        }
+    }
+}
+
+fn wait_for_child(read_fd: OwnedFd) -> ! {
+    use std::io::Read;
+    let mut file = std::fs::File::from(read_fd);
+    let mut buf = [0u8; 1];
+    match file.read(&mut buf) {
+        Ok(1) => std::process::exit(buf[0] as i32),
+        _ => {
+            ::tracing::error!("daemon shut down unexpectedly");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn redirect_stdio() {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    if let Ok(devnull) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/null")
+    {
+        for raw in [0, 1, 2] {
+            let mut fd = unsafe { OwnedFd::from_raw_fd(raw) };
+            let _ = nix::unistd::dup2(&devnull, &mut fd);
+            std::mem::forget(fd);
+        }
+    }
+}
+
+fn daemon_hold(
+    stats: &ops::Stats,
+    inner: &LockInner,
+    term: &AtomicBool,
+    notify_fd: Option<OwnedFd>,
+) {
+    if let Some(p) = &inner.pidfile
+        && let Err(e) = std::fs::write(p, format!("{}\n", std::process::id()))
+    {
+        ::tracing::warn!("pidfile: {e}");
+    }
+
     let page_size = mmap::page_size() as i64;
     let total = stats.total_pages.load(std::sync::atomic::Ordering::Relaxed);
     ::tracing::info!(
@@ -124,23 +192,18 @@ fn daemon_wait(stats: &ops::Stats, inner: &LockInner) {
         output::pretty_size(total * page_size)
     );
 
-    if inner.daemon {
-        if let Some(p) = &inner.pidfile
-            && let Err(e) = std::fs::write(p, format!("{}\n", std::process::id()))
-        {
-            ::tracing::warn!("pidfile: {e}");
-        }
+    if let Some(fd) = notify_fd {
+        use std::io::Write;
+        let mut file = std::fs::File::from(fd);
+        let _ = file.write_all(&[0u8]);
+    }
 
-        let mut signals = signal_hook::iterator::Signals::new([
-            signal_hook::consts::SIGINT,
-            signal_hook::consts::SIGTERM,
-        ])
-        .expect("signal hook");
-        signals.forever().next();
+    while !term.load(std::sync::atomic::Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 
-        if let Some(p) = &inner.pidfile {
-            let _ = std::fs::remove_file(p);
-        }
+    if let Some(p) = &inner.pidfile {
+        let _ = std::fs::remove_file(p);
     }
 }
 
@@ -148,9 +211,16 @@ fn main() {
     let cli = Cli::parse();
     tracing::init(cli.command.verbosity());
 
+    let term = Arc::new(AtomicBool::new(false));
+    for sig in signal_hook::consts::TERM_SIGNALS {
+        signal_hook::flag::register_conditional_shutdown(*sig, 1, Arc::clone(&term))
+            .expect("register signal");
+        signal_hook::flag::register(*sig, Arc::clone(&term)).expect("register signal");
+    }
+
     match cli.command {
         Command::Query(a) => {
-            run(ops::Query, a.common(), true);
+            run(ops::Query, a.common(), true, &term);
         }
         Command::Touch(a) => {
             if let Some(n) = a.inner.threads {
@@ -163,15 +233,21 @@ fn main() {
                 },
                 a.common(),
                 true,
+                &term,
             );
         }
         Command::Evict(a) => {
-            run(ops::Evict, a.common(), true);
+            run(ops::Evict, a.common(), true, &term);
         }
         Command::Lock(a) => {
             if let Some(n) = a.inner.load.threads {
                 set_threads(n);
             }
+            let notify_fd = if a.inner.daemon {
+                go_daemon(a.inner.wait)
+            } else {
+                None
+            };
             let (stats, _locked_files) = run(
                 ops::Lock {
                     touch: ops::Touch {
@@ -181,13 +257,21 @@ fn main() {
                 },
                 a.common(),
                 false,
+                &term,
             );
-            daemon_wait(&stats, &a.inner);
+            if a.inner.daemon {
+                daemon_hold(&stats, &a.inner, &term, notify_fd);
+            }
         }
         Command::Lockall(a) => {
             if let Some(n) = a.inner.load.threads {
                 set_threads(n);
             }
+            let notify_fd = if a.inner.daemon {
+                go_daemon(a.inner.wait)
+            } else {
+                None
+            };
             let (stats, _) = run(
                 ops::Touch {
                     chunk_size: a.inner.load.chunk_size as usize,
@@ -195,12 +279,15 @@ fn main() {
                 },
                 a.common(),
                 false,
+                &term,
             );
             if let Err(e) = mmap::mlockall_current() {
                 ::tracing::error!("FATAL: {e}");
                 std::process::exit(1);
             }
-            daemon_wait(&stats, &a.inner);
+            if a.inner.daemon {
+                daemon_hold(&stats, &a.inner, &term, notify_fd);
+            }
         }
     }
 }
