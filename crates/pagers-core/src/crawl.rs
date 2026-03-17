@@ -2,12 +2,14 @@
 
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use ignore::WalkBuilder;
 
-use crate::ops::{self, LockedFile, OpConfig, Stats};
+use crate::events::Event;
+use crate::ops::{self, FileRange, Op, Stats};
 
 pub struct CrawlConfig {
     pub follow_symlinks: bool,
@@ -20,20 +22,21 @@ pub struct CrawlConfig {
     pub nul_delim: bool,
 }
 
-/// Crawl paths and process files. Returns locked files (if lock mode).
-pub fn crawl_and_process(
+/// Crawl paths and process files. Returns op outputs (non-empty files only).
+pub fn crawl_and_process<O: Op>(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
-    op_config: &OpConfig,
+    op: &O,
+    range: &FileRange,
     stats: &Stats,
-) -> Vec<LockedFile> {
+    events: Option<&Sender<Event>>,
+) -> Vec<O::Output> {
     let seen_inodes: Arc<DashMap<(u64, u64), ()>> = Arc::new(DashMap::new());
-    let locked_files: Arc<std::sync::Mutex<Vec<LockedFile>>> =
+    let outputs: Arc<std::sync::Mutex<Vec<O::Output>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
 
     let mut all_paths: Vec<PathBuf> = paths.to_vec();
 
-    // Add batch paths
     if let Some(batch_path) = &crawl_config.batch {
         match read_batch_paths(batch_path, crawl_config.nul_delim) {
             Ok(batch_paths) => all_paths.extend(batch_paths),
@@ -55,7 +58,6 @@ pub fn crawl_and_process(
                 .git_global(false)
                 .git_exclude(false);
 
-            // Add ignore overrides
             if !crawl_config.ignore_patterns.is_empty() || !crawl_config.filter_patterns.is_empty()
             {
                 let mut overrides = ignore::overrides::OverrideBuilder::new(path);
@@ -84,17 +86,12 @@ pub fn crawl_and_process(
                     None => continue,
                 };
 
-                if ft.is_dir() {
-                    continue;
-                }
-
-                if !ft.is_file() {
+                if ft.is_dir() || !ft.is_file() {
                     continue;
                 }
 
                 let entry_path = entry.path();
 
-                // Max file size filter
                 if let Some(max_size) = crawl_config.max_file_size
                     && let Ok(meta) = entry_path.metadata()
                     && meta.len() > max_size
@@ -102,7 +99,6 @@ pub fn crawl_and_process(
                     continue;
                 }
 
-                // Inode dedup
                 if !crawl_config.count_hardlinks {
                     #[cfg(unix)]
                     {
@@ -119,10 +115,10 @@ pub fn crawl_and_process(
                     }
                 }
 
-                process_entry(entry_path, op_config, stats, &locked_files);
+                process_entry(entry_path, op, range, stats, events, &outputs);
             }
         } else if path.is_file() {
-            process_entry(path, op_config, stats, &locked_files);
+            process_entry(path, op, range, stats, events, &outputs);
         } else {
             eprintln!(
                 "pagers: WARNING: skipping {}: not a file or directory",
@@ -131,21 +127,23 @@ pub fn crawl_and_process(
         }
     }
 
-    match Arc::try_unwrap(locked_files) {
+    match Arc::try_unwrap(outputs) {
         Ok(mutex) => mutex.into_inner().expect("mutex poisoned"),
         Err(_) => panic!("Arc still has multiple owners"),
     }
 }
 
-fn process_entry(
+fn process_entry<O: Op>(
     path: &Path,
-    op_config: &OpConfig,
+    op: &O,
+    range: &FileRange,
     stats: &Stats,
-    locked_files: &Arc<std::sync::Mutex<Vec<LockedFile>>>,
+    events: Option<&Sender<Event>>,
+    outputs: &Arc<std::sync::Mutex<Vec<O::Output>>>,
 ) {
-    match ops::process_file(path, op_config, stats) {
-        Ok(Some(locked)) => {
-            locked_files.lock().unwrap().push(locked);
+    match ops::process_file(op, path, range, stats, events) {
+        Ok(Some(output)) => {
+            outputs.lock().unwrap().push(output);
         }
         Ok(None) => {}
         Err(e) => {
@@ -171,7 +169,6 @@ fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>> {
             if n == 0 {
                 break;
             }
-            // Strip trailing NUL if present
             if buf.last() == Some(&0) {
                 buf.pop();
             }

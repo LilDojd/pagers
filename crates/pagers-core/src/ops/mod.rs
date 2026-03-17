@@ -1,15 +1,48 @@
 //! Per-file operations: touch, query, evict, lock.
 
 mod evict;
+mod lock;
+mod query;
 mod touch;
 
 use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use memmap2::{Mmap, MmapOptions};
 
+use crate::events::Event;
 use crate::mmap;
+
+pub use evict::Evict;
+pub use lock::{Lock, LockedFile};
+pub use query::Query;
+pub use touch::Touch;
+
+/// Trait for file-level page cache operations.
+pub trait Op: Sync {
+    type Output: Send;
+    fn execute(&self, ctx: &FileContext) -> anyhow::Result<Self::Output>;
+}
+
+/// Context prepared by the framework for each file.
+pub struct FileContext<'a> {
+    pub file: &'a File,
+    pub path: &'a Path,
+    pub mmap: Arc<Mmap>,
+    pub offset: u64,
+    pub len: usize,
+    pub events: Option<&'a Sender<Event>>,
+}
+
+/// Byte range within a file to operate on.
+#[derive(Clone, Copy)]
+pub struct FileRange {
+    pub offset: u64,
+    pub max_len: Option<u64>,
+}
 
 /// Accumulated statistics across all files processed.
 pub struct Stats {
@@ -30,41 +63,15 @@ impl Stats {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct TouchParams {
-    pub chunk_size: usize,
-    pub timeout_secs: f64,
-}
-
-#[derive(Clone, Copy)]
-pub enum Operation {
-    Query,
-    Touch(TouchParams),
-    Evict,
-    Lock(TouchParams),
-}
-
-pub struct OpConfig {
-    pub operation: Operation,
-    pub offset: u64,
-    pub max_len: Option<u64>,
-    pub events: Option<std::sync::mpsc::Sender<crate::events::Event>>,
-}
-
-/// Result of processing a single file — holds the mmap if locked.
-pub struct LockedFile {
-    pub _path: String,
-    pub _mmap: Mmap,
-    pub _len: usize,
-}
-
-/// Process a single file: touch, query, evict, or lock.
-/// Returns a LockedFile if lock mode is active (caller must keep it alive).
-pub fn process_file(
+/// Process a single file with the given operation.
+/// Returns `None` for empty files, `Some(output)` otherwise.
+pub fn process_file<O: Op>(
+    op: &O,
     path: &Path,
-    config: &OpConfig,
+    range: &FileRange,
     stats: &Stats,
-) -> anyhow::Result<Option<LockedFile>> {
+    events: Option<&Sender<Event>>,
+) -> anyhow::Result<Option<O::Output>> {
     let file = File::open(path)?;
     let metadata = file.metadata()?;
     let file_len = metadata.len();
@@ -73,13 +80,12 @@ pub fn process_file(
         return Ok(None);
     }
 
-    // Calculate the range to operate on
-    let offset = config.offset;
+    let offset = range.offset;
     if offset >= file_len {
         anyhow::bail!("file {} smaller than offset", path.display());
     }
 
-    let len_of_range = match config.max_len {
+    let len_of_range = match range.max_len {
         Some(max) if (offset + max) < file_len => max as usize,
         _ => (file_len - offset) as usize,
     };
@@ -92,17 +98,12 @@ pub fn process_file(
         .fetch_add(pages_in_range as i64, Ordering::Relaxed);
     stats.total_files.fetch_add(1, Ordering::Relaxed);
 
-    if matches!(config.operation, Operation::Evict) {
-        evict::evict_file(&file, path, offset as i64, len_of_range as i64)?;
-        return Ok(None);
-    }
-
-    let mmap = unsafe {
+    let mmap = Arc::new(unsafe {
         MmapOptions::new()
             .offset(offset)
             .len(len_of_range)
             .map(&file)?
-    };
+    });
 
     let residency = mmap::mincore_residency(&mmap, len_of_range)?;
     let pages_in_core: i64 = residency.iter().filter(|r| **r).count() as i64;
@@ -110,63 +111,39 @@ pub fn process_file(
         .total_pages_in_core
         .fetch_add(pages_in_core, Ordering::Relaxed);
 
-    if let Some(tx) = &config.events {
-        let _ = tx.send(crate::events::Event::FileStart {
+    if let Some(tx) = events {
+        let _ = tx.send(Event::FileStart {
             path: path.display().to_string(),
             total_pages: pages_in_range,
-            residency: residency.clone(),
+            residency,
         });
     }
 
-    let touch_params = match config.operation {
-        Operation::Touch(p) | Operation::Lock(p) => Some(p),
-        _ => None,
+    let ctx = FileContext {
+        file: &file,
+        path,
+        mmap: Arc::clone(&mmap),
+        offset,
+        len: len_of_range,
+        events,
     };
 
-    if let Some(params) = touch_params {
-        touch::touch_file(
-            &mmap,
-            len_of_range,
-            params,
-            &path.display().to_string(),
-            &config.events,
-        )?;
+    let output = op.execute(&ctx)?;
 
-        let residency_after = mmap::mincore_residency(&mmap, len_of_range)?;
-        let new_in_core: i64 = residency_after.iter().filter(|r| **r).count() as i64;
-        let delta = new_in_core - pages_in_core;
-        stats
-            .total_pages_in_core
-            .fetch_add(delta, Ordering::Relaxed);
-    }
+    let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
+    let final_in_core: i64 = final_residency.iter().filter(|r| **r).count() as i64;
+    let delta = final_in_core - pages_in_core;
+    stats
+        .total_pages_in_core
+        .fetch_add(delta, Ordering::Relaxed);
 
-    if matches!(config.operation, Operation::Lock(_)) {
-        mmap::mlock(&mmap, len_of_range)?;
-        if let Some(tx) = &config.events {
-            let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
-            let final_in_core = final_residency.iter().filter(|r| **r).count();
-            let _ = tx.send(crate::events::Event::FileDone {
-                path: path.display().to_string(),
-                pages_in_core: final_in_core,
-                total_pages: pages_in_range,
-            });
-        }
-        return Ok(Some(LockedFile {
-            _path: path.display().to_string(),
-            _mmap: mmap,
-            _len: len_of_range,
-        }));
-    }
-
-    if let Some(tx) = &config.events {
-        let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
-        let final_in_core = final_residency.iter().filter(|r| **r).count();
-        let _ = tx.send(crate::events::Event::FileDone {
+    if let Some(tx) = events {
+        let _ = tx.send(Event::FileDone {
             path: path.display().to_string(),
-            pages_in_core: final_in_core,
+            pages_in_core: final_in_core as usize,
             total_pages: pages_in_range,
         });
     }
 
-    Ok(None)
+    Ok(Some(output))
 }
