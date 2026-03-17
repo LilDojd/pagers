@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 pagers-core = { workspace = true }
+pagers-tui = { workspace = true }
 clap = { workspace = true, features = [
   "derive",
   "color",

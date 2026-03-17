@@ -3,6 +3,8 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.dependencies]
+color-eyre = "0.6"
+crossterm = "0.28"
 anstyle = "1.0.14"
 anyhow = "1"
 clap = "4"
@@ -11,10 +13,17 @@ clap_mangen = "0.2"
 dashmap = "6"
 glob = "0.3"
 ignore = "0.4"
-indicatif = "0.18"
 libc = "0.2"
 memmap2 = "0.9"
 pagers-core = { path = "crates/pagers-core" }
+pagers-tui = { path = "crates/pagers-tui" }
+ratatui = "0.30"
 rayon = "1.11"
 tempfile = "3"
 thiserror = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

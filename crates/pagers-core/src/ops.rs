@@ -6,7 +6,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Instant;
 
-use indicatif::{ProgressBar, ProgressStyle};
 use memmap2::{Mmap, MmapOptions};
 
 use crate::mmap;
@@ -50,6 +49,7 @@ pub struct OpConfig {
     pub quiet: bool,
     pub offset: u64,
     pub max_len: Option<u64>,
+    pub events: Option<std::sync::mpsc::Sender<crate::events::Event>>,
 }
 
 /// Result of processing a single file — holds the mmap if locked.
@@ -57,23 +57,6 @@ pub struct LockedFile {
     pub _path: String,
     pub _mmap: Mmap,
     pub _len: usize,
-}
-
-/// Create a progress bar for a file being touched.
-pub fn make_progress_bar(path: &str, quiet: bool) -> Option<ProgressBar> {
-    if quiet {
-        return None;
-    }
-    let pb = ProgressBar::new(0);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} pages ({percent}%) {msg}"
-        )
-        .unwrap()
-        .progress_chars("=>-"),
-    );
-    pb.set_message(path.to_string());
-    Some(pb)
 }
 
 /// Process a single file: touch, query, evict, or lock.
@@ -128,14 +111,21 @@ pub fn process_file(
         .total_pages_in_core
         .fetch_add(pages_in_core, Ordering::Relaxed);
 
+    if let Some(tx) = &config.events {
+        let _ = tx.send(crate::events::Event::FileStart {
+            path: path.display().to_string(),
+            total_pages: pages_in_range,
+            residency: residency.clone(),
+        });
+    }
+
     let touch_params = match config.operation {
         Operation::Touch(p) | Operation::Lock(p) => Some(p),
         _ => None,
     };
 
     if let Some(params) = touch_params {
-        let pb = make_progress_bar(&path.display().to_string(), config.quiet);
-        touch_file(&mmap, len_of_range, params, pb.as_ref())?;
+        touch_file(&mmap, len_of_range, params, &path.display().to_string(), &config.events)?;
 
         let residency_after = mmap::mincore_residency(&mmap, len_of_range)?;
         let new_in_core: i64 = residency_after.iter().filter(|r| **r).count() as i64;
@@ -147,11 +137,30 @@ pub fn process_file(
 
     if matches!(config.operation, Operation::Lock(_)) {
         mmap::mlock(&mmap, len_of_range)?;
+        if let Some(tx) = &config.events {
+            let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
+            let final_in_core = final_residency.iter().filter(|r| **r).count();
+            let _ = tx.send(crate::events::Event::FileDone {
+                path: path.display().to_string(),
+                pages_in_core: final_in_core,
+                total_pages: pages_in_range,
+            });
+        }
         return Ok(Some(LockedFile {
             _path: path.display().to_string(),
             _mmap: mmap,
             _len: len_of_range,
         }));
+    }
+
+    if let Some(tx) = &config.events {
+        let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
+        let final_in_core = final_residency.iter().filter(|r| **r).count();
+        let _ = tx.send(crate::events::Event::FileDone {
+            path: path.display().to_string(),
+            pages_in_core: final_in_core,
+            total_pages: pages_in_range,
+        });
     }
 
     Ok(None)
@@ -162,17 +171,14 @@ fn touch_file(
     mmap: &Mmap,
     len: usize,
     params: TouchParams,
-    progress: Option<&ProgressBar>,
+    path: &str,
+    events: &Option<std::sync::mpsc::Sender<crate::events::Event>>,
 ) -> anyhow::Result<()> {
     let chunk_size = params.chunk_size;
     let page_size = mmap::page_size();
     let total_pages = len.div_ceil(page_size);
     let timeout = std::time::Duration::from_secs(params.timeout_secs);
     let start = Instant::now();
-
-    if let Some(pb) = progress {
-        pb.set_length(total_pages as u64);
-    }
 
     // Step 1: Issue madvise(MADV_WILLNEED) on all chunks
     let chunks: Vec<(usize, usize)> = (0..len)
@@ -195,8 +201,11 @@ fn touch_file(
         let residency = mmap::mincore_residency(mmap, len)?;
         let resident_count = residency.iter().filter(|r| **r).count();
 
-        if let Some(pb) = progress {
-            pb.set_position(resident_count as u64);
+        if let Some(tx) = events {
+            let _ = tx.send(crate::events::Event::FileProgress {
+                path: path.to_string(),
+                residency: residency.clone(),
+            });
         }
 
         if resident_count == total_pages {
@@ -221,17 +230,17 @@ fn touch_file(
                 }
             });
 
-            if let Some(pb) = progress {
-                pb.set_position(total_pages as u64);
+            if let Some(tx) = events {
+                let final_residency = mmap::mincore_residency(mmap, len)?;
+                let _ = tx.send(crate::events::Event::FileProgress {
+                    path: path.to_string(),
+                    residency: final_residency,
+                });
             }
             break;
         }
 
         std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-
-    if let Some(pb) = progress {
-        pb.finish();
     }
 
     Ok(())

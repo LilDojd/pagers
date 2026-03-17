@@ -19,6 +19,7 @@ struct CrawlOp<'a> {
     operation: ops::Operation,
     mode: &'static str,
     threads: Option<usize>,
+    tui: bool,
 }
 
 struct DaemonOp<'a> {
@@ -42,6 +43,7 @@ fn run_crawl(
     common: &CommonArgs,
     mode: &str,
     operation: ops::Operation,
+    tui: bool,
 ) -> (ops::Stats, Vec<ops::LockedFile>) {
     if common.quiet && common.verbose > 0 {
         eprintln!("pagers: --quiet and --verbose are mutually exclusive");
@@ -63,12 +65,20 @@ fn run_crawl(
         (0, None)
     };
 
+    let (events_tx, events_rx) = if tui && !common.quiet {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
     let op_config = ops::OpConfig {
         operation,
         verbose: common.verbose,
         quiet: common.quiet,
         offset,
         max_len,
+        events: events_tx,
     };
 
     let crawl_config = crawl::CrawlConfig {
@@ -85,7 +95,23 @@ fn run_crawl(
     let stats = ops::Stats::new();
     let start = Instant::now();
 
+    let tui_handle = events_rx.map(|rx| {
+        std::thread::spawn(move || {
+            if let Err(e) = pagers_tui::run(rx) {
+                eprintln!("pagers: TUI error: {e}");
+            }
+        })
+    });
+
     let locked = crawl::crawl_and_process(&common.paths, &crawl_config, &op_config, &stats);
+
+    // Drop the event sender to signal TUI to exit
+    drop(op_config);
+
+    // Wait for TUI to finish
+    if let Some(handle) = tui_handle {
+        let _ = handle.join();
+    }
 
     let elapsed = start.elapsed().as_secs_f64();
     let output_fmt = common.output.as_ref().map(|f| match f {
@@ -104,7 +130,7 @@ impl Executable for CrawlOp<'_> {
         if let Some(n) = self.threads {
             set_threads(n);
         }
-        run_crawl(self.common, self.mode, self.operation);
+        run_crawl(self.common, self.mode, self.operation, self.tui);
     }
 }
 
@@ -113,7 +139,7 @@ impl Executable for DaemonOp<'_> {
         if let Some(n) = self.threads {
             set_threads(n);
         }
-        let (stats, locked_files) = run_crawl(self.common, self.mode, self.operation);
+        let (stats, locked_files) = run_crawl(self.common, self.mode, self.operation, false);
 
         if self.lockall
             && let Err(e) = mmap::mlockall_current()
@@ -166,6 +192,7 @@ impl Command {
                 operation: ops::Operation::Query,
                 mode: "query",
                 threads: None,
+                tui: true,
             }),
             Self::Touch(a) => Box::new(CrawlOp {
                 common: &a.common,
@@ -175,12 +202,14 @@ impl Command {
                 }),
                 mode: "touch",
                 threads: a.threads,
+                tui: true,
             }),
             Self::Evict(a) => Box::new(CrawlOp {
                 common: &a.common,
                 operation: ops::Operation::Evict,
                 mode: "evict",
                 threads: None,
+                tui: true,
             }),
             Self::Lock(a) => Box::new(DaemonOp {
                 common: &a.common,

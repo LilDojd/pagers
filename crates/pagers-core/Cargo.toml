@@ -7,7 +7,6 @@ edition = "2024"
 memmap2 = { workspace = true }
 libc = { workspace = true }
 rayon = { workspace = true }
-indicatif = { workspace = true }
 ignore = { workspace = true }
 dashmap = { workspace = true }
 anyhow = { workspace = true }
