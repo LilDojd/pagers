@@ -1,6 +1,8 @@
+mod app;
 mod event;
 mod state;
 mod ui;
+pub use app::App;
 pub use state::FileState;
 
 use std::sync::mpsc;
