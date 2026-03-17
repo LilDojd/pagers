@@ -1,0 +1,8 @@
+health:
+  default:
+    direnv:
+      required: true
+develop:
+  default:
+    readme: |
+      pagers devShell.
