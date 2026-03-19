@@ -1,32 +1,49 @@
 //! Safe wrappers around mmap, mincore, madvise.
 
+use std::ptr::NonNull;
+
 use memmap2::{Advice, Mmap};
+use nix::errno::Errno;
+use nix::sys::mman::{mlockall, MlockAllFlags};
 
 /// Query page residency for an mmap'd region.
 /// Returns a Vec<bool> with one entry per page (true = resident).
-pub fn mincore_residency(mmap: &Mmap, len: usize) -> std::io::Result<Vec<bool>> {
+pub fn mincore_residency(mmap: &Mmap, len: usize) -> nix::Result<Vec<bool>> {
     let page_size = page_size();
-    let num_pages = len.div_ceil(page_size);
-    let mut vec: Vec<u8> = vec![0u8; num_pages];
+    // Size is from mincore man page
+    let vec_len = (len + page_size - 1) / page_size;
+    let mut vec_out: Vec<u8> = Vec::with_capacity(vec_len);
 
-    let ret = unsafe {
-        libc::mincore(
+    unsafe {
+        // SAFETY: mincore takes a pointer to a virtual memory region and writes
+        // RAM residency information to the memory region at vec_out, with the
+        // length computed above using the expression from the mincore man page.
+        // We have allocated the underlying buffer by using with_capacity.
+        if libc::mincore(
             mmap.as_ptr() as *mut libc::c_void,
             len,
-            vec.as_mut_ptr() as *mut libc::c_char,
-        )
-    };
-
-    if ret != 0 {
-        return Err(std::io::Error::last_os_error());
+            vec_out.as_mut_ptr(),
+        ) != 0
+        {
+            // Returncode of either 0 (success) or -1 (failure, see errno)
+            // We don't do any other calls in between mincore and Errno::last so errno is untouched
+            // errno is thread-unique so there are no race conditions
+            return Err(Errno::last());
+        }
+        // SAFETY: we just filled up the vector with valid values
+        vec_out.set_len(vec_len);
     }
-
-    Ok(vec.into_iter().map(|b| b & 1 != 0).collect())
+    Ok(vec_out.into_iter().map(|x| x != 0).collect())
 }
 
 /// Returns the system page size.
 pub fn page_size() -> usize {
-    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+    usize::try_from(
+        nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
+            .expect("Failed to fetch _SC_PAGESIZE")
+            .expect("_SC_PAGESIZE returned None"),
+    )
+    .unwrap()
 }
 
 /// Issue madvise(MADV_WILLNEED) on a range of the mmap.
@@ -34,36 +51,30 @@ pub fn advise_willneed(mmap: &Mmap, offset: usize, len: usize) -> std::io::Resul
     mmap.advise_range(Advice::WillNeed, offset, len)
 }
 
+fn eperm_message(call: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        format!("{call} failed — may need SYS_IPC_LOCK capability or higher memory limits"),
+    )
+}
+
 /// Lock pages in physical memory.
 pub fn mlock(mmap: &Mmap, len: usize) -> std::io::Result<()> {
-    let ret = unsafe { libc::mlock(mmap.as_ptr() as *const libc::c_void, len) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::EPERM) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "mlock failed — may need SYS_IPC_LOCK capability or higher memory limits",
-            ));
-        }
-        return Err(err);
-    }
-    Ok(())
+    // SAFETY: mmap.as_ptr() points to a valid memory-mapped region of at least `len` bytes.
+    let addr = NonNull::new(mmap.as_ptr() as *mut std::ffi::c_void)
+        .expect("mmap pointer should never be null");
+    unsafe { nix::sys::mman::mlock(addr, len) }.map_err(|e| match e {
+        Errno::EPERM => eperm_message("mlock"),
+        other => other.into(),
+    })
 }
 
 /// Call mlockall(MCL_CURRENT) to lock all current mappings.
 pub fn mlockall_current() -> std::io::Result<()> {
-    let ret = unsafe { libc::mlockall(libc::MCL_CURRENT) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::EPERM) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "mlockall failed — may need SYS_IPC_LOCK capability or higher memory limits",
-            ));
-        }
-        return Err(err);
-    }
-    Ok(())
+    mlockall(MlockAllFlags::MCL_CURRENT).map_err(|e| match e {
+        Errno::EPERM => eperm_message("mlockall"),
+        other => other.into(),
+    })
 }
 
 #[cfg(test)]
@@ -84,8 +95,9 @@ mod tests {
 
     #[test]
     fn test_page_size_is_positive() {
-        assert!(page_size() > 0);
-        assert!(page_size().is_power_of_two());
+        let ps = page_size();
+        assert!(ps > 0);
+        assert!(ps.is_power_of_two());
     }
 
     #[test]

@@ -11,6 +11,7 @@
         buildInputs = [ pkgs.openssl ];
         nativeBuildInputs = [ pkgs.pkg-config ];
         packages = with pkgs; [
+          vmtouch
           just
           nixd # Nix language server
           bacon
