@@ -1,9 +1,41 @@
 //! Human-readable and machine-readable output formatting.
 
+use std::fmt;
 use std::sync::atomic::Ordering;
 
 use crate::mmap;
 use crate::ops::Stats;
+
+/// Operation mode, used to label summary output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Query,
+    Touch,
+    Evict,
+    Lock,
+    Lockall,
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Query => "query",
+            Self::Touch => "touch",
+            Self::Evict => "evict",
+            Self::Lock => "lock",
+            Self::Lockall => "lockall",
+        })
+    }
+}
+
+/// Output format for summary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputFormat {
+    Pretty,
+    Kv,
+    Kv,
+    Json,
+}
 
 pub fn pretty_size(bytes: i64) -> String {
     const KI: f64 = 1024.0;
@@ -25,63 +57,144 @@ pub fn pretty_size(bytes: i64) -> String {
     }
 }
 
-pub fn print_summary(stats: &Stats, elapsed: f64, mode: &str, output_format: Option<&str>) {
-    let page_size = mmap::page_size() as i64;
-    let total_pages = stats.total_pages.load(Ordering::Relaxed);
-    let pages_in_core = stats.total_pages_in_core.load(Ordering::Relaxed);
-    let total_files = stats.total_files.load(Ordering::Relaxed);
-    let total_dirs = stats.total_dirs.load(Ordering::Relaxed);
+/// Collect summary data from stats into a structured form.
+pub struct Summary {
+    pub total_files: i64,
+    pub total_dirs: i64,
+    pub total_pages: i64,
+    pub pages_in_core: i64,
+    pub total_size: i64,
+    pub in_core_size: i64,
+    pub pct: f64,
+    pub elapsed: f64,
+    pub mode: Mode,
+}
 
-    let total_size = total_pages * page_size;
-    let in_core_size = pages_in_core * page_size;
-    let pct = if total_pages > 0 {
-        100.0 * pages_in_core as f64 / total_pages as f64
-    } else {
-        0.0
-    };
+impl Summary {
+    pub fn from_stats(stats: &Stats, elapsed: f64, mode: Mode) -> Self {
+        let page_size = mmap::page_size() as i64;
+        let total_pages = stats.total_pages.load(Ordering::Relaxed);
+        let pages_in_core = stats.total_pages_in_core.load(Ordering::Relaxed);
+        let total_files = stats.total_files.load(Ordering::Relaxed);
+        let total_dirs = stats.total_dirs.load(Ordering::Relaxed);
 
-    match output_format {
-        Some("kv") => {
-            let desc = match mode {
-                "touch" => "Touched",
-                "evict" => "Evicted",
-                _ => "Resident",
-            };
-            println!(
-                "Files={total_files} Directories={total_dirs} \
-                 {desc}Pages={pages_in_core} TotalPages={total_pages} \
-                 {desc}Size={in_core_size} TotalSize={total_size} \
-                 {desc}Percent={pct:.3} Elapsed={elapsed:.5}"
-            );
-        }
-        _ => {
-            println!("           Files: {total_files}");
-            println!("     Directories: {total_dirs}");
-            match mode {
-                "touch" => println!(
-                    "   Touched Pages: {total_pages} ({})",
-                    pretty_size(total_size)
-                ),
-                "evict" => println!(
-                    "   Evicted Pages: {total_pages} ({})",
-                    pretty_size(total_size)
-                ),
-                _ => {
-                    print!("  Resident Pages: {pages_in_core}/{total_pages}  ",);
-                    print!(
-                        "{}/{}  ",
-                        pretty_size(in_core_size),
-                        pretty_size(total_size)
-                    );
-                    if total_pages > 0 {
-                        print!("{pct:.3}%");
-                    }
-                    println!();
-                }
-            }
-            println!("         Elapsed: {elapsed:.5} seconds");
+        let total_size = total_pages * page_size;
+        let in_core_size = pages_in_core * page_size;
+        let pct = if total_pages > 0 {
+            100.0 * pages_in_core as f64 / total_pages as f64
+        } else {
+            0.0
+        };
+
+        Self {
+            total_files,
+            total_dirs,
+            total_pages,
+            pages_in_core,
+            total_size,
+            in_core_size,
+            pct,
+            elapsed,
+            mode,
         }
     }
+
+    pub fn print(&self, format: OutputFormat) {
+        match format {
+            OutputFormat::Kv => self.print_kv(),
+            OutputFormat::Json => self.print_json(),
+            OutputFormat::Pretty => self.print_pretty(),
+        }
+    }
+
+    fn print_kv(&self) {
+        let desc = match self.mode {
+            Mode::Touch => "Touched",
+            Mode::Evict => "Evicted",
+            _ => "Resident",
+        };
+        println!(
+            "Files={} Directories={} \
+             {desc}Pages={} TotalPages={} \
+             {desc}Size={} TotalSize={} \
+             {desc}Percent={:.3} Elapsed={:.5}",
+            self.total_files,
+            self.total_dirs,
+            self.pages_in_core,
+            self.total_pages,
+            self.in_core_size,
+            self.total_size,
+            self.pct,
+            self.elapsed,
+        );
+    }
+
+    fn print_json(&self) {
+        let desc = match self.mode {
+            Mode::Touch => "touched",
+            Mode::Evict => "evicted",
+            _ => "resident",
+        };
+        // Manual JSON to avoid adding serde dependency
+        println!(
+            "{{\
+            \"files\":{},\
+            \"directories\":{},\
+            \"{desc}_pages\":{},\
+            \"total_pages\":{},\
+            \"{desc}_size\":{},\
+            \"total_size\":{},\
+            \"{desc}_percent\":{:.3},\
+            \"elapsed\":{:.5}\
+            }}",
+            self.total_files,
+            self.total_dirs,
+            self.pages_in_core,
+            self.total_pages,
+            self.in_core_size,
+            self.total_size,
+            self.pct,
+            self.elapsed,
+        );
+    }
+
+    fn print_pretty(&self) {
+        println!("           Files: {}", self.total_files);
+        println!("     Directories: {}", self.total_dirs);
+        match self.mode {
+            Mode::Touch => println!(
+                "   Touched Pages: {} ({})",
+                self.total_pages,
+                pretty_size(self.total_size)
+            ),
+            Mode::Evict => println!(
+                "   Evicted Pages: {} ({})",
+                self.total_pages,
+                pretty_size(self.total_size)
+            ),
+            _ => {
+                print!(
+                    "  Resident Pages: {}/{}  ",
+                    self.pages_in_core, self.total_pages,
+                );
+                print!(
+                    "{}/{}  ",
+                    pretty_size(self.in_core_size),
+                    pretty_size(self.total_size)
+                );
+                if self.total_pages > 0 {
+                    print!("{:.3}%", self.pct);
+                }
+                println!();
+            }
+        }
+        println!("         Elapsed: {:.5} seconds", self.elapsed);
+    }
+}
+
+/// Print summary in the given format. Convenience wrapper.
+pub fn print_summary(stats: &Stats, elapsed: f64, mode: Mode, format: OutputFormat) {
+    Summary::from_stats(stats, elapsed, mode).print(format);
 }
 
 #[cfg(test)]

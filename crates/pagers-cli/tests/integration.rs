@@ -120,6 +120,30 @@ fn test_kv_output() {
 }
 
 #[test]
+fn test_json_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    let mut f = fs::File::create(&file_path).unwrap();
+    f.write_all(&vec![0u8; 4096]).unwrap();
+    f.flush().unwrap();
+
+    let output = pagers_bin()
+        .args(["query", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"files\":1"), "stdout: {stdout}");
+    assert!(stdout.contains("\"total_pages\":"), "stdout: {stdout}");
+    assert!(stdout.starts_with('{'), "should be JSON object: {stdout}");
+}
+
+#[test]
 fn test_quiet_mode() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");

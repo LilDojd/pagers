@@ -8,14 +8,14 @@ use ratatui::widgets::Widget;
 
 use pagers_core::mmap;
 use pagers_core::ops::Stats;
-use pagers_core::output::pretty_size;
+use pagers_core::output::{Mode, pretty_size};
 
 pub(crate) const SUMMARY_LINES: u16 = 4;
 
 pub(crate) fn render_summary(
     stats: &Stats,
     elapsed: f64,
-    mode: &str,
+    mode: Mode,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -31,11 +31,11 @@ pub(crate) fn render_summary(
     let label_style = Style::default().fg(Color::DarkGray);
 
     let pages_line = match mode {
-        "touch" => Line::from(vec![
+        Mode::Touch => Line::from(vec![
             Span::styled("   Touched Pages: ", label_style),
             Span::raw(format!("{total_pages} ({})", pretty_size(total_size))),
         ]),
-        "evict" => Line::from(vec![
+        Mode::Evict => Line::from(vec![
             Span::styled("   Evicted Pages: ", label_style),
             Span::raw(format!("{total_pages} ({})", pretty_size(total_size))),
         ]),

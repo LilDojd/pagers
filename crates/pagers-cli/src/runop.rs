@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
+use pagers_core::output::Mode;
 use pagers_core::{crawl, mmap, ops};
 
 use crate::Error;
@@ -17,6 +18,7 @@ where
     fn run(
         &self,
         common: &CommonArgs,
+        mode: Mode,
         tui: bool,
         term: &Arc<AtomicBool>,
     ) -> Result<(Arc<ops::Stats>, Vec<Self::Output>, f64), Error> {
@@ -58,19 +60,13 @@ where
 
         let stats = Arc::new(ops::Stats::new());
         let start = Instant::now();
-        let mode = std::any::type_name::<Self>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("unknown")
-            .to_lowercase();
 
         let outputs = if let Some(events_rx) = events_rx {
             let term_clone = Arc::clone(term);
             let stats_clone = Arc::clone(&stats);
-            let tui_mode = mode;
             let tui_handle = std::thread::spawn(move || {
                 if let Err(e) =
-                    pagers_tui::run(events_rx, term_clone, stats_clone, tui_mode, start)
+                    pagers_tui::run(events_rx, term_clone, stats_clone, mode, start)
                 {
                     ::tracing::error!("TUI error: {e}");
                 }

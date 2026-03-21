@@ -2,6 +2,7 @@ use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use pagers_core::output::Mode;
 use pagers_core::{mmap, ops, output};
 
 use crate::Error;
@@ -12,13 +13,15 @@ pub(crate) trait Daemonize: RunOp
 where
     Self::Output: 'static,
 {
+    const MODE: Mode;
+
     fn from_args(args: &LockInner) -> Self;
 
     fn run_daemonized(&self, a: &WithCommon<LockInner>, term: &Arc<AtomicBool>) -> Result<(), Error> {
         match go_daemon(a.inner.wait)? {
             ForkOutcome::Parent => Ok(()),
             ForkOutcome::Child(notify_fd) => {
-                let (stats, _, _) = self.run(a.common(), false, term)?;
+                let (stats, _, _) = self.run(a.common(), Self::MODE, false, term)?;
                 hold(&stats, &a.inner, term, notify_fd);
                 Ok(())
             }
@@ -27,6 +30,8 @@ where
 }
 
 impl Daemonize for ops::Lock {
+    const MODE: Mode = Mode::Lock;
+
     fn from_args(args: &LockInner) -> Self {
         Self {
             touch: ops::Touch {
@@ -38,6 +43,8 @@ impl Daemonize for ops::Lock {
 }
 
 impl Daemonize for ops::Lockall {
+    const MODE: Mode = Mode::Lockall;
+
     fn from_args(args: &LockInner) -> Self {
         Self {
             lock: ops::Lock::from_args(args),

@@ -148,6 +148,8 @@ pub struct LockInner {
 pub enum OutputFormat {
     /// Key=value pairs
     Kv,
+    /// JSON output
+    Json,
 }
 
 fn styles() -> clap::builder::Styles {
