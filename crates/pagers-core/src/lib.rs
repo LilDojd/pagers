@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+pub mod cachestat;
 pub mod crawl;
 pub mod events;
 pub mod mmap;
