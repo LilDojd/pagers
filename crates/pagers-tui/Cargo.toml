@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bitvec = { workspace = true }
 color-eyre = "0.6"
 crossterm = "0.29"
 pagers-core = { workspace = true }

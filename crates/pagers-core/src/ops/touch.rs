@@ -4,11 +4,6 @@ use crate::mmap;
 /// 2 MiB per fadvise call stays under Linux's `max_sane_readahead()` cap.
 const FADVISE_STEP: usize = 2 * 1024 * 1024;
 
-/// How often to send TUI progress during the sequential page walk.
-/// 512 pages = 2 MiB at 4K page size — fast enough for smooth display,
-/// infrequent enough to avoid mincore overhead.
-const PROGRESS_INTERVAL: usize = 512;
-
 /// Readahead via fadvise, then walk every page with read_volatile.
 pub struct Touch;
 
@@ -40,24 +35,13 @@ impl Op for Touch {
 
             if let Some(sink) = ctx.events
                 && page_idx > 0
-                && page_idx % PROGRESS_INTERVAL == 0
-                && let Ok(residency) = mmap::mincore_residency(mmap, len)
+                && page_idx % 4096 == 0
             {
                 sink.send(crate::events::Event::FileProgress {
                     path: ctx.path.display().to_string(),
-                    residency,
+                    pages_walked: page_idx,
                 });
             }
-        }
-
-        // Final progress event with full residency
-        if let Some(sink) = ctx.events
-            && let Ok(residency) = mmap::mincore_residency(mmap, len)
-        {
-            sink.send(crate::events::Event::FileProgress {
-                path: ctx.path.display().to_string(),
-                residency,
-            });
         }
 
         Ok(())

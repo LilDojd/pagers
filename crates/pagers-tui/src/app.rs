@@ -29,7 +29,7 @@ impl App {
                 total_pages,
                 residency,
             }) => {
-                let pages_in_core = residency.iter().filter(|&&b| b).count();
+                let pages_in_core = residency.count_ones();
                 let idx = self.files.len();
                 self.file_index.insert(path.clone(), idx);
                 self.files.push(FileState {
@@ -41,11 +41,14 @@ impl App {
                 });
                 ControlFlow::Continue
             }
-            TuiEvent::Core(CoreEvent::FileProgress { path, residency }) => {
-                let pages_in_core = residency.iter().filter(|&&b| b).count();
+            TuiEvent::Core(CoreEvent::FileProgress { path, pages_walked }) => {
                 if let Some(&idx) = self.file_index.get(&path) {
-                    self.files[idx].pages_in_core = pages_in_core;
-                    self.files[idx].residency = residency;
+                    let file = &mut self.files[idx];
+                    let end = pages_walked.min(file.residency.len());
+                    if file.pages_in_core < end {
+                        file.residency[file.pages_in_core..end].fill(true);
+                        file.pages_in_core = end;
+                    }
                 }
                 ControlFlow::Continue
             }
@@ -62,7 +65,7 @@ impl App {
                 }
                 ControlFlow::Continue
             }
-            TuiEvent::CoreDone => ControlFlow::Done,
+            TuiEvent::Core(CoreEvent::AllDone) => ControlFlow::Done,
             TuiEvent::Quit => ControlFlow::Quit,
         }
     }
@@ -105,7 +108,7 @@ mod tests {
         let flow = app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/test.bin".to_string(),
             total_pages: 100,
-            residency: vec![true; 50],
+            residency: bitvec::bitvec![1; 50],
         }));
         assert!(matches!(flow, ControlFlow::Continue));
         assert_eq!(app.files().len(), 1);
@@ -118,11 +121,11 @@ mod tests {
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/a.bin".to_string(),
             total_pages: 100,
-            residency: vec![false; 100],
+            residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileProgress {
             path: "/a.bin".to_string(),
-            residency: vec![true; 100],
+            pages_walked: 100,
         }));
         assert_eq!(app.files()[0].pages_in_core, 100);
     }
@@ -133,13 +136,13 @@ mod tests {
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/a.bin".to_string(),
             total_pages: 100,
-            residency: vec![false; 100],
+            residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
             path: "/a.bin".to_string(),
             pages_in_core: 100,
             total_pages: 100,
-            residency: vec![true; 100],
+            residency: bitvec::bitvec![1; 100],
         }));
         assert!(app.files()[0].done);
     }
@@ -150,12 +153,12 @@ mod tests {
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/first.bin".to_string(),
             total_pages: 100,
-            residency: vec![true; 90],
+            residency: bitvec::bitvec![1; 90],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/second.bin".to_string(),
             total_pages: 100,
-            residency: vec![true; 10],
+            residency: bitvec::bitvec![1; 10],
         }));
         let files = app.files();
         assert_eq!(files[0].path, "/first.bin");
@@ -168,17 +171,17 @@ mod tests {
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/small.bin".to_string(),
             total_pages: 10,
-            residency: vec![false; 10],
+            residency: bitvec::bitvec![0; 10],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/big.bin".to_string(),
             total_pages: 1000,
-            residency: vec![false; 1000],
+            residency: bitvec::bitvec![0; 1000],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/mid.bin".to_string(),
             total_pages: 100,
-            residency: vec![false; 100],
+            residency: bitvec::bitvec![0; 100],
         }));
         let vis = app.visible_files(8);
         assert_eq!(vis[0].path, "/big.bin");
@@ -193,23 +196,23 @@ mod tests {
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/a.bin".to_string(),
             total_pages: 100,
-            residency: vec![false; 100],
+            residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/b.bin".to_string(),
             total_pages: 200,
-            residency: vec![false; 200],
+            residency: bitvec::bitvec![0; 200],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/c.bin".to_string(),
             total_pages: 50,
-            residency: vec![false; 50],
+            residency: bitvec::bitvec![0; 50],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
             path: "/b.bin".to_string(),
             pages_in_core: 200,
             total_pages: 200,
-            residency: vec![true; 200],
+            residency: bitvec::bitvec![1; 200],
         }));
         let vis = app.visible_files(2);
         assert_eq!(vis.len(), 2);
@@ -223,13 +226,13 @@ mod tests {
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
             path: "/a.bin".to_string(),
             total_pages: 100,
-            residency: vec![false; 100],
+            residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
             path: "/a.bin".to_string(),
             pages_in_core: 100,
             total_pages: 100,
-            residency: vec![true; 100],
+            residency: bitvec::bitvec![1; 100],
         }));
         // Only 1 file, max=8 → done file stays visible
         let vis = app.visible_files(8);
@@ -238,9 +241,9 @@ mod tests {
     }
 
     #[test]
-    fn test_core_done_returns_done() {
+    fn test_all_done_returns_done() {
         let mut app = App::new();
-        let flow = app.handle_event(TuiEvent::CoreDone);
+        let flow = app.handle_event(TuiEvent::Core(CoreEvent::AllDone));
         assert!(matches!(flow, ControlFlow::Done));
     }
 

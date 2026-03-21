@@ -118,6 +118,7 @@ pub(crate) fn truncate_path(path: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitvec::prelude::Lsb0;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
@@ -152,8 +153,8 @@ mod tests {
             total_pages: 100,
             pages_in_core: 75,
             residency: {
-                let mut r = vec![true; 75];
-                r.extend(vec![false; 25]);
+                let mut r = bitvec::bitvec![1; 75];
+                r.extend(bitvec::bitvec![0; 25]);
                 r
             },
             done: false,
@@ -177,14 +178,14 @@ mod tests {
             path: "/high.bin".to_string(),
             total_pages: 100,
             pages_in_core: 90,
-            residency: vec![true; 100], // simplified
+            residency: bitvec::bitvec![1; 100], // simplified
             done: false,
         };
         let low = FileState {
             path: "/low.bin".to_string(),
             total_pages: 100,
             pages_in_core: 10,
-            residency: vec![false; 100],
+            residency: bitvec::bitvec![0; 100],
             done: false,
         };
         let mut files: Vec<&FileState> = vec![&high, &low];
@@ -207,7 +208,7 @@ mod tests {
             path: "test".to_string(),
             total_pages: 200,
             pages_in_core: 100,
-            residency: vec![true; 200],
+            residency: bitvec::bitvec![1; 200],
             done: false,
         };
         assert!((f.ratio() - 0.5).abs() < f64::EPSILON);
@@ -215,7 +216,7 @@ mod tests {
             path: "empty".to_string(),
             total_pages: 0,
             pages_in_core: 0,
-            residency: vec![],
+            residency: bitvec::bitvec![],
             done: false,
         };
         assert!((empty.ratio() - 0.0).abs() < f64::EPSILON);
@@ -227,7 +228,7 @@ mod tests {
             path: "/tmp/done.bin".to_string(),
             total_pages: 100,
             pages_in_core: 100,
-            residency: vec![true; 100],
+            residency: bitvec::bitvec![1; 100],
             done: true,
         };
         let backend = TestBackend::new(80, 1);
@@ -253,8 +254,8 @@ mod tests {
     #[test]
     fn test_page_map_shows_cached_regions() {
         // First half cached, second half not
-        let mut residency = vec![true; 50];
-        residency.extend(vec![false; 50]);
+        let mut residency = bitvec::bitvec![1; 50];
+        residency.extend(bitvec::bitvec![0; 50]);
         let file = FileState {
             path: "/test.bin".to_string(),
             total_pages: 100,
@@ -279,9 +280,7 @@ mod tests {
             path: "t".to_string(),
             total_pages: 10,
             pages_in_core: 5,
-            residency: vec![
-                true, true, true, true, true, false, false, false, false, false,
-            ],
+            residency: bitvec::bitvec![1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
             done: false,
         };
         let buckets = file.bucketize(5);
@@ -300,7 +299,7 @@ mod tests {
             path: "t".to_string(),
             total_pages: 1,
             pages_in_core: 0,
-            residency: vec![false],
+            residency: bitvec::bitvec![0],
             done: false,
         };
         let buckets = file.bucketize(1);
@@ -314,7 +313,7 @@ mod tests {
             path: "t".to_string(),
             total_pages: 1,
             pages_in_core: 1,
-            residency: vec![true],
+            residency: bitvec::bitvec![1],
             done: false,
         };
         let buckets = file.bucketize(1);

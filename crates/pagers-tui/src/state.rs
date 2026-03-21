@@ -1,8 +1,10 @@
+use bitvec::prelude::*;
+
 pub struct FileState {
     pub path: String,
     pub total_pages: usize,
     pub pages_in_core: usize,
-    pub residency: Vec<bool>,
+    pub residency: BitVec,
     pub done: bool,
 }
 
@@ -29,7 +31,7 @@ impl FileState {
                 let end = (i + 1) * n / w;
                 let slice = &self.residency[start..end];
 
-                (slice.iter().filter(|&&b| b).count(), slice.len())
+                (slice.count_ones(), slice.len())
             })
             .collect()
     }

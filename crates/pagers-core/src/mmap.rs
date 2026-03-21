@@ -2,13 +2,14 @@
 
 use std::ptr::NonNull;
 
+use bitvec::prelude::*;
 use memmap2::{Advice, Mmap};
 use nix::errno::Errno;
 use nix::sys::mman::{MlockAllFlags, mlockall};
 
 /// Query page residency for an mmap'd region.
-/// Returns a Vec<bool> with one entry per page (true = resident).
-pub fn mincore_residency(mmap: &Mmap, len: usize) -> nix::Result<Vec<bool>> {
+/// Returns a `BitVec` with one bit per page (true = resident).
+pub fn mincore_residency(mmap: &Mmap, len: usize) -> nix::Result<BitVec> {
     let page_size = page_size();
     // Size is from mincore man page
     let vec_len = len.div_ceil(page_size);
@@ -136,6 +137,6 @@ mod tests {
         let _ = junk;
 
         let residency = mincore_residency(&mmap, size).unwrap();
-        assert!(residency.iter().all(|&r| r));
+        assert!(residency.iter().all(|r| *r));
     }
 }

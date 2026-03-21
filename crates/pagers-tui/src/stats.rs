@@ -1,7 +1,8 @@
 use std::sync::atomic::Ordering;
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Rect};
+use ratatui::macros::{horizontal, vertical};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
@@ -11,6 +12,8 @@ use pagers_core::ops::Stats;
 use pagers_core::output::pretty_size;
 
 pub(crate) const SUMMARY_LINES: u16 = 4;
+
+const LABEL_WIDTH: u16 = 17;
 
 pub(crate) fn render_summary(
     stats: &Stats,
@@ -30,53 +33,48 @@ pub(crate) fn render_summary(
 
     let label_style = Style::default().fg(Color::DarkGray);
 
-    let pages_line = if label == "resident" {
+    let (pages_label, pages_value) = if label == "resident" {
         let pct = if total_pages > 0 {
             100.0 * pages_in_core as f64 / total_pages as f64
         } else {
             0.0
         };
-        let mut spans = vec![
-            Span::styled("  Resident Pages: ", label_style),
-            Span::raw(format!(
-                "{pages_in_core}/{total_pages}  {}/{}",
-                pretty_size(in_core_size),
-                pretty_size(total_size)
-            )),
-        ];
+        let mut spans = vec![Span::raw(format!(
+            "{pages_in_core}/{total_pages}  {}/{}",
+            pretty_size(in_core_size),
+            pretty_size(total_size)
+        ))];
         if total_pages > 0 {
             spans.push(Span::raw(format!("  {pct:.3}%")));
         }
-        Line::from(spans)
+        ("Resident Pages:".to_string(), Line::from(spans))
     } else {
         let mut cap = label.to_string();
         if let Some(c) = cap.get_mut(0..1) {
             c.make_ascii_uppercase();
         }
-        Line::from(vec![
-            Span::styled(format!("  {cap:>8} Pages: "), label_style),
-            Span::raw(format!("{total_pages} ({})", pretty_size(total_size))),
-        ])
+        (
+            format!("{cap} Pages:"),
+            Line::from(format!("{total_pages} ({})", pretty_size(total_size))),
+        )
     };
 
-    let lines = [
-        Line::from(vec![
-            Span::styled("           Files: ", label_style),
-            Span::raw(format!("{total_files}")),
-        ]),
-        Line::from(vec![
-            Span::styled("     Directories: ", label_style),
-            Span::raw(format!("{total_dirs}")),
-        ]),
-        pages_line,
-        Line::from(vec![
-            Span::styled("         Elapsed: ", label_style),
-            Span::raw(format!("{elapsed:.5} seconds")),
-        ]),
+    let rows: [(String, Line); 4] = [
+        ("Files:".into(), Line::from(format!("{total_files}"))),
+        ("Directories:".into(), Line::from(format!("{total_dirs}"))),
+        (pages_label, pages_value),
+        ("Elapsed:".into(), Line::from(format!("{elapsed:.5} seconds"))),
     ];
 
-    let areas = Layout::vertical(lines.iter().map(|_| Constraint::Length(1))).split(area);
-    for (i, line) in lines.into_iter().enumerate() {
-        line.render(areas[i], buf);
+    let row_areas = vertical![==1, ==1, ==1, ==1].split(area);
+    for (i, (label_text, value_line)) in rows.into_iter().enumerate() {
+        let [label_area, _, value_area] =
+            horizontal![==LABEL_WIDTH, ==1, *=1].areas(row_areas[i]);
+
+        Line::from(Span::styled(label_text, label_style))
+            .alignment(Alignment::Right)
+            .render(label_area, buf);
+
+        value_line.render(value_area, buf);
     }
 }

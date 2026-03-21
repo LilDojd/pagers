@@ -62,6 +62,10 @@ pub fn crawl_and_process<O: Op>(
         )
         .collect();
 
+    if let Some(ref sink) = sink {
+        sink.send(Event::AllDone);
+    }
+
     op.finish()?;
 
     Ok(outputs)

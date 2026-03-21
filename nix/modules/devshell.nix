@@ -19,6 +19,11 @@
           cargo-nextest
           cargo-machete
           cargo-autoinherit
+          cargo-flamegraph
+          mold
+          samply
+          perf
+          clang
         ];
       };
     };

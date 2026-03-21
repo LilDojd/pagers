@@ -166,20 +166,16 @@ pub fn process_file<O: Op>(
     });
 
     #[cfg(target_os = "linux")]
-    let use_cachestat = events.is_none() && crate::cachestat::supported();
+    let has_cachestat = crate::cachestat::supported();
     #[cfg(not(target_os = "linux"))]
-    let use_cachestat = false;
+    let has_cachestat = false;
 
-    // Count initial residency.
-    let pages_in_core = if use_cachestat {
-        cachestat_count(&file, offset, len as u64)?
-    } else {
+    let need_bitmap = events.is_some() && !discovered;
+
+    let pages_in_core = if need_bitmap {
         let residency = mmap::mincore_residency(&mmap, len)?;
-        let count = residency.iter().filter(|r| **r).count() as i64;
-
-        if let Some(sink) = events
-            && !discovered
-        {
+        let count = residency.count_ones() as i64;
+        if let Some(sink) = events {
             sink.send(Event::FileStart {
                 path: path_str(),
                 total_pages: pages,
@@ -187,6 +183,11 @@ pub fn process_file<O: Op>(
             });
         }
         count
+    } else if has_cachestat {
+        cachestat_count(&file, offset, len as u64)?
+    } else {
+        let residency = mmap::mincore_residency(&mmap, len)?;
+        residency.count_ones() as i64
     };
 
     stats
@@ -204,12 +205,9 @@ pub fn process_file<O: Op>(
 
     let output = op.execute(&ctx)?;
 
-    // Count final residency and compute delta.
-    let final_in_core = if use_cachestat {
-        cachestat_count(&file, offset, len as u64)?
-    } else {
+    let final_in_core = if events.is_some() {
         let residency = mmap::mincore_residency(&mmap, len)?;
-        let count = residency.iter().filter(|r| **r).count() as i64;
+        let count = residency.count_ones() as i64;
 
         if let Some(sink) = events {
             sink.send(Event::FileDone {
@@ -220,6 +218,11 @@ pub fn process_file<O: Op>(
             });
         }
         count
+    } else if has_cachestat {
+        cachestat_count(&file, offset, len as u64)?
+    } else {
+        let residency = mmap::mincore_residency(&mmap, len)?;
+        residency.count_ones() as i64
     };
 
     stats
@@ -320,7 +323,7 @@ mod tests {
         };
         let residency = mmap::mincore_residency(&mmap_check, size).unwrap();
         assert!(
-            residency.iter().all(|&r| r),
+            residency.all(),
             "expected all pages resident after touch"
         );
     }
@@ -348,8 +351,9 @@ mod tests {
             max_len: None,
         };
         let (tx, rx) = std::sync::mpsc::channel();
-        process_file(&Query, f.path(), &range, &stats, Some(&tx), false).unwrap();
-        drop(tx);
+        let sink = crate::events::EventSink::new(tx);
+        process_file(&Query, f.path(), &range, &stats, Some(&sink), false).unwrap();
+        drop(sink);
 
         let events: Vec<_> = rx.iter().collect();
         assert!(events.len() >= 2, "expected at least 2 events, got {}", events.len());

@@ -10,7 +10,7 @@ pub use state::FileState;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use color_eyre::Result;
 use pagers_core::events::Event as CoreEvent;
@@ -44,57 +44,61 @@ pub fn run(
         },
     )?;
 
+    let term_cleanup = Arc::clone(&term);
     let tui_rx = event::spawn_event_threads(rx, term);
     let mut app = App::new();
     let mut quit = false;
     let mut done = false;
 
-    while let Ok(evt) = tui_rx.recv() {
-        let mut needs_draw = matches!(evt, event::TuiEvent::Core(_));
-        match app.handle_event(evt) {
-            app::ControlFlow::Continue => {}
-            app::ControlFlow::Done => done = true,
-            app::ControlFlow::Quit => quit = true,
-        }
-
-        // Drain any queued events before drawing to batch updates
-        if !done && !quit {
-            while let Ok(next) = tui_rx.try_recv() {
-                needs_draw |= matches!(next, event::TuiEvent::Core(_));
-                match app.handle_event(next) {
+    loop {
+        match tui_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(evt) => {
+                match app.handle_event(evt) {
                     app::ControlFlow::Continue => {}
-                    app::ControlFlow::Done => {
-                        done = true;
-                        break;
-                    }
-                    app::ControlFlow::Quit => {
-                        quit = true;
-                        break;
+                    app::ControlFlow::Done => done = true,
+                    app::ControlFlow::Quit => quit = true,
+                }
+
+                if !done && !quit {
+                    while let Ok(next) = tui_rx.try_recv() {
+                        match app.handle_event(next) {
+                            app::ControlFlow::Continue => {}
+                            app::ControlFlow::Done => {
+                                done = true;
+                                break;
+                            }
+                            app::ControlFlow::Quit => {
+                                quit = true;
+                                break;
+                            }
+                        }
                     }
                 }
             }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
-        if needs_draw {
-            let elapsed = start.elapsed().as_secs_f64();
-            let files = app.visible_files(MAX_DISPLAY_FILES as usize);
-            terminal.draw(|frame| {
-                ui::render_viewport(
-                    &files,
-                    MAX_DISPLAY_FILES,
-                    &core_stats,
-                    elapsed,
-                    label,
-                    frame.area(),
-                    frame.buffer_mut(),
-                );
-            })?;
-        }
+        let elapsed = start.elapsed().as_secs_f64();
+        let files = app.visible_files(MAX_DISPLAY_FILES as usize);
+        terminal.draw(|frame| {
+            ui::render_viewport(
+                &files,
+                MAX_DISPLAY_FILES,
+                &core_stats,
+                elapsed,
+                label,
+                frame.area(),
+                frame.buffer_mut(),
+            );
+        })?;
 
         if done || quit {
             break;
         }
     }
+
+    term_cleanup.store(true, std::sync::atomic::Ordering::Relaxed);
 
     if !quit {
         let elapsed = start.elapsed().as_secs_f64();

@@ -3,6 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.dependencies]
+bitvec = "1"
 nix = "0.31"
 pagers-core = { path = "crates/pagers-core" }
 tempfile = "3"
@@ -13,3 +14,8 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+[profile.perf]
+inherits = "release"
+debug = true
+strip = false

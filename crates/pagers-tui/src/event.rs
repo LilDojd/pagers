@@ -9,7 +9,6 @@ use pagers_core::events::Event as CoreEvent;
 /// Internal event type combining core events with TUI-specific events.
 pub(crate) enum TuiEvent {
     Core(CoreEvent),
-    CoreDone,
     Quit,
 }
 
@@ -32,9 +31,10 @@ pub(crate) fn spawn_event_threads(
     });
 
     // Raw mode swallows SIGINT, so poll for Ctrl+C as a keypress.
+    let key_term = Arc::clone(&term);
     let key_tx = tui_tx.clone();
     thread::spawn(move || {
-        loop {
+        while !key_term.load(Ordering::Relaxed) {
             if crossterm::event::poll(Duration::from_millis(100)).unwrap_or(false)
                 && let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
                 && key.code == crossterm::event::KeyCode::Char('c')
@@ -42,7 +42,7 @@ pub(crate) fn spawn_event_threads(
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL)
             {
-                term.store(true, Ordering::Relaxed);
+                key_term.store(true, Ordering::Relaxed);
                 let _ = key_tx.send(TuiEvent::Quit);
                 return;
             }
@@ -56,7 +56,6 @@ pub(crate) fn spawn_event_threads(
                 return;
             }
         }
-        let _ = core_tx.send(TuiEvent::CoreDone);
     });
 
     tui_rx
