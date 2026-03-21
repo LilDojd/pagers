@@ -13,6 +13,7 @@ const PROGRESS_INTERVAL: usize = 512;
 pub struct Touch;
 
 impl Op for Touch {
+    const LABEL: &str = "touched";
     type Output = ();
 
     fn execute(&self, ctx: &FileContext) -> crate::Result<()> {

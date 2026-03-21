@@ -6,6 +6,7 @@ use crate::mmap;
 pub struct Lockall;
 
 impl Op for Lockall {
+    const LABEL: &str = "locked";
     type Output = LockedFile;
 
     fn execute(&self, ctx: &FileContext) -> crate::Result<LockedFile> {

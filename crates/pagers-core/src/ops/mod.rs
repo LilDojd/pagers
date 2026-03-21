@@ -26,6 +26,8 @@ pub use touch::Touch;
 
 /// Trait for file-level page cache operations.
 pub trait Op: Sync {
+    const LABEL: &str;
+
     type Output: Send;
     fn execute(&self, ctx: &FileContext) -> crate::Result<Self::Output>;
 

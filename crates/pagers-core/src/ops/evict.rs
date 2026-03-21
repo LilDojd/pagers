@@ -3,6 +3,7 @@ use super::{FileContext, Op};
 pub struct Evict;
 
 impl Op for Evict {
+    const LABEL: &str = "evicted";
     type Output = ();
 
     fn execute(&self, ctx: &FileContext) -> crate::Result<()> {

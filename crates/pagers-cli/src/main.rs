@@ -56,38 +56,38 @@ fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
     match cli.command {
         Command::Query(a) => {
             let common = a.common();
-            let (stats, _, elapsed) = ops::Query.run(common, "resident", true, term)?;
-            maybe_print_summary(&stats, elapsed, "resident", common);
+            let (stats, _, elapsed) = ops::Query.run(common, true, term)?;
+            maybe_print_summary::<ops::Query>(&stats, elapsed, common);
         }
         Command::Touch(a) => {
             let common = a.common();
-            let (stats, _, elapsed) = ops::Touch.run(common, "touched", true, term)?;
-            maybe_print_summary(&stats, elapsed, "touched", common);
+            let (stats, _, elapsed) = ops::Touch.run(common, true, term)?;
+            maybe_print_summary::<ops::Touch>(&stats, elapsed, common);
         }
         Command::Evict(a) => {
             let common = a.common();
-            let (stats, _, elapsed) = ops::Evict.run(common, "evicted", true, term)?;
-            maybe_print_summary(&stats, elapsed, "evicted", common);
+            let (stats, _, elapsed) = ops::Evict.run(common, true, term)?;
+            maybe_print_summary::<ops::Evict>(&stats, elapsed, common);
         }
         Command::Lock(a) => {
             if a.inner.daemon {
                 ops::Lock.run_daemonized(&a, term)?;
             } else {
-                ops::Lock.run(a.common(), "locked", false, term)?;
+                ops::Lock.run(a.common(), false, term)?;
             }
         }
         Command::Lockall(a) => {
             if a.inner.daemon {
                 ops::Lockall.run_daemonized(&a, term)?;
             } else {
-                ops::Lockall.run(a.common(), "locked", false, term)?;
+                ops::Lockall.run(a.common(), false, term)?;
             }
         }
     }
     Ok(())
 }
 
-fn maybe_print_summary(stats: &ops::Stats, elapsed: f64, label: &str, common: &CommonArgs) {
+fn maybe_print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, common: &CommonArgs) {
     use std::io::IsTerminal;
 
     if common.verbosity.is_silent() {
@@ -102,5 +102,5 @@ fn maybe_print_summary(stats: &ops::Stats, elapsed: f64, label: &str, common: &C
         None => CoreOutputFormat::Human,
     };
     let summary = Summary::from_stats(stats, elapsed);
-    format.print_summary(&summary, label);
+    format.print_summary(&summary, O::LABEL);
 }

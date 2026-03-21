@@ -24,6 +24,7 @@ pub struct LockedFile {
 }
 
 impl Op for Lock {
+    const LABEL: &str = "locked";
     type Output = LockedFile;
 
     fn execute(&self, ctx: &FileContext) -> crate::Result<LockedFile> {
