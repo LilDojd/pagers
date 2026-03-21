@@ -2,6 +2,7 @@
 
 mod evict;
 mod lock;
+mod lockall;
 mod query;
 mod touch;
 
@@ -18,6 +19,7 @@ use crate::mmap;
 
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
+pub use lockall::Lockall;
 pub use query::Query;
 pub use touch::Touch;
 
@@ -25,6 +27,10 @@ pub use touch::Touch;
 pub trait Op: Sync {
     type Output: Send;
     fn execute(&self, ctx: &FileContext) -> anyhow::Result<Self::Output>;
+
+    fn finish(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// Context prepared by the framework for each file.

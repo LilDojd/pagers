@@ -161,18 +161,18 @@ fn main() {
                 None
             };
             let (stats, _) = run(
-                ops::Touch {
-                    chunk_size: a.inner.load.chunk_size as usize,
-                    timeout_secs: a.inner.load.timeout,
+                ops::Lockall {
+                    lock: ops::Lock {
+                        touch: ops::Touch {
+                            chunk_size: a.inner.load.chunk_size as usize,
+                            timeout_secs: a.inner.load.timeout,
+                        },
+                    },
                 },
                 a.common(),
                 false,
                 &term,
             );
-            if let Err(e) = mmap::mlockall_current() {
-                ::tracing::error!("FATAL: {e}");
-                std::process::exit(1);
-            }
             if a.inner.daemon {
                 daemon_hold(&stats, &a.inner, &term, notify_fd);
             }

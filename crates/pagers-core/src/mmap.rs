@@ -4,14 +4,14 @@ use std::ptr::NonNull;
 
 use memmap2::{Advice, Mmap};
 use nix::errno::Errno;
-use nix::sys::mman::{mlockall, MlockAllFlags};
+use nix::sys::mman::{MlockAllFlags, mlockall};
 
 /// Query page residency for an mmap'd region.
 /// Returns a Vec<bool> with one entry per page (true = resident).
 pub fn mincore_residency(mmap: &Mmap, len: usize) -> nix::Result<Vec<bool>> {
     let page_size = page_size();
     // Size is from mincore man page
-    let vec_len = (len + page_size - 1) / page_size;
+    let vec_len = len.div_ceil(page_size);
     let mut vec_out: Vec<u8> = Vec::with_capacity(vec_len);
 
     unsafe {

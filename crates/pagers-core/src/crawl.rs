@@ -41,7 +41,7 @@ pub fn crawl_and_process<O: Op>(
     let discovered = if let Some(tx) = events {
         for path in &file_paths {
             if let Err(e) = ops::send_file_start(path, range, tx) {
-                eprintln!("pagers: WARNING: {}: {e}", path.display());
+                ::tracing::warn!("{}: {e}", path.display());
             }
         }
         true
@@ -57,9 +57,14 @@ pub fn crawl_and_process<O: Op>(
             }
             Ok(None) => {}
             Err(e) => {
-                eprintln!("pagers: WARNING: {}: {e}", path.display());
+                ::tracing::warn!("{}: {e}", path.display());
             }
         }
+    }
+
+    if let Err(e) = op.finish() {
+        ::tracing::error!("FATAL: {e}");
+        std::process::exit(1);
     }
 
     match Arc::try_unwrap(outputs) {
@@ -79,7 +84,7 @@ fn collect_file_paths(
     if let Some(batch_path) = &crawl_config.batch {
         match read_batch_paths(batch_path, crawl_config.nul_delim) {
             Ok(batch_paths) => all_paths.extend(batch_paths),
-            Err(e) => eprintln!("pagers: WARNING: batch file: {e}"),
+            Err(e) => ::tracing::warn!("batch file: {e}"),
         }
     }
 
@@ -117,7 +122,7 @@ fn collect_file_paths(
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
-                        eprintln!("pagers: WARNING: {e}");
+                        ::tracing::warn!("{e}");
                         continue;
                     }
                 };
@@ -161,10 +166,7 @@ fn collect_file_paths(
         } else if path.is_file() {
             file_paths.push(path.clone());
         } else {
-            eprintln!(
-                "pagers: WARNING: skipping {}: not a file or directory",
-                path.display()
-            );
+            ::tracing::warn!("skipping {}: not a file or directory", path.display());
         }
     }
 
