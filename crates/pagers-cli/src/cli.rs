@@ -117,17 +117,13 @@ pub struct CommonArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct LoadArgs {
-    /// Chunk size for parallel madvise (e.g. 128M)
+    /// Chunk size for madvise (e.g. 128M)
     #[arg(long, default_value = "128M", value_parser = parse_size)]
     pub chunk_size: u64,
 
     /// Max seconds to wait for madvise convergence
     #[arg(long, default_value = "30")]
     pub timeout: f64,
-
-    /// Thread pool size (default: num CPUs)
-    #[arg(long)]
-    pub threads: Option<usize>,
 }
 
 #[derive(clap::Args, Debug)]

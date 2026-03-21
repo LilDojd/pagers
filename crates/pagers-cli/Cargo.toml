@@ -21,7 +21,6 @@ clap-verbosity-flag = { version = "3.0.4", default-features = false, features = 
 ] }
 pagers-core = { workspace = true }
 pagers-tui = { path = "../pagers-tui" }
-rayon = { workspace = true }
 nix = { workspace = true, features = ["fs", "process"] }
 signal-hook = "0.4"
 thiserror = "2"

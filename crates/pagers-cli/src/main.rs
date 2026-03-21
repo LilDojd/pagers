@@ -13,13 +13,6 @@ mod tracing;
 use cli::*;
 use size_range::{SizeRange, parse_size};
 
-fn set_threads(n: usize) {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(n)
-        .build_global()
-        .ok();
-}
-
 fn run<O: ops::Op + Send + 'static>(
     op: O,
     common: &CommonArgs,
@@ -215,9 +208,6 @@ fn main() {
             run(ops::Query, a.common(), true, &term);
         }
         Command::Touch(a) => {
-            if let Some(n) = a.inner.threads {
-                set_threads(n);
-            }
             run(
                 ops::Touch {
                     chunk_size: a.inner.chunk_size as usize,
@@ -232,9 +222,6 @@ fn main() {
             run(ops::Evict, a.common(), true, &term);
         }
         Command::Lock(a) => {
-            if let Some(n) = a.inner.load.threads {
-                set_threads(n);
-            }
             let notify_fd = if a.inner.daemon {
                 go_daemon(a.inner.wait)
             } else {
@@ -256,9 +243,6 @@ fn main() {
             }
         }
         Command::Lockall(a) => {
-            if let Some(n) = a.inner.load.threads {
-                set_threads(n);
-            }
             let notify_fd = if a.inner.daemon {
                 go_daemon(a.inner.wait)
             } else {

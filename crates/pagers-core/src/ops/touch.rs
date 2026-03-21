@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use rayon::prelude::*;
-
 use super::{FileContext, Op};
 use crate::mmap;
 
@@ -21,19 +19,20 @@ impl Op for Touch {
         let timeout = std::time::Duration::from_secs_f64(self.timeout_secs);
         let start = Instant::now();
 
-        let chunks: Vec<(usize, usize)> = (0..len)
-            .step_by(self.chunk_size)
-            .map(|off| {
-                let chunk_len = (len - off).min(self.chunk_size);
-                (off, chunk_len)
-            })
-            .collect();
+        // Linux's madvise(MADV_WILLNEED) silently caps readahead per call via
+        // max_sane_readahead(). Use a small step size for madvise to avoid gaps.
+        let advise_step = if cfg!(target_os = "linux") {
+            self.chunk_size.min(2 * 1024 * 1024)
+        } else {
+            self.chunk_size
+        };
 
-        chunks.par_iter().for_each(|&(off, chunk_len)| {
+        for off in (0..len).step_by(advise_step) {
+            let chunk_len = (len - off).min(advise_step);
             if let Err(e) = mmap::advise_willneed(mmap, off, chunk_len) {
                 tracing::warn!("madvise failed at offset {off}: {e}");
             }
-        });
+        }
 
         loop {
             let residency = mmap::mincore_residency(mmap, len)?;
@@ -50,6 +49,8 @@ impl Op for Touch {
                 break;
             }
 
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
             if start.elapsed() >= timeout {
                 let non_resident: Vec<usize> = residency
                     .iter()
@@ -60,9 +61,8 @@ impl Op for Touch {
 
                 // Fault all pages in a background thread, poll mincore for progress
                 let mmap_ptr = mmap.as_ptr() as usize;
-                let non_resident_clone = non_resident.clone();
                 let fault_handle = std::thread::spawn(move || {
-                    non_resident_clone.par_iter().for_each(|&page_idx| {
+                    for &page_idx in &non_resident {
                         let offset = page_idx * page_size;
                         if offset < len {
                             unsafe {
@@ -70,7 +70,7 @@ impl Op for Touch {
                                     std::ptr::read_volatile((mmap_ptr as *const u8).add(offset));
                             }
                         }
-                    });
+                    }
                 });
 
                 // Poll residency while faults are in progress
