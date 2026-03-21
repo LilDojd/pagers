@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -11,12 +12,14 @@ pub(crate) trait RunOp: ops::Op + Send + Sized + 'static
 where
     Self::Output: 'static,
 {
+    /// Run the operation. Returns (stats, outputs, elapsed_secs).
+    /// When TUI is active, summary is printed by TUI; caller should only print for non-TUI.
     fn run(
         &self,
         common: &CommonArgs,
         tui: bool,
         term: &Arc<AtomicBool>,
-    ) -> Result<(Arc<ops::Stats>, Vec<Self::Output>), Error> {
+    ) -> Result<(Arc<ops::Stats>, Vec<Self::Output>, f64), Error> {
         let (offset, max_len) = if let Some(ref range) = common.range {
             let page_size = mmap::page_size() as u64;
             let aligned = (range.start_b / page_size) * page_size;
@@ -32,7 +35,10 @@ where
 
         let range = ops::FileRange { offset, max_len };
 
-        let (events_tx, events_rx) = if tui && !common.verbosity.is_silent() {
+        let use_tui = tui
+            && !common.verbosity.is_silent()
+            && std::io::stdout().is_terminal();
+        let (events_tx, events_rx) = if use_tui {
             let (tx, rx) = std::sync::mpsc::channel();
             (Some(tx), Some(rx))
         } else {
@@ -95,7 +101,8 @@ where
             outputs
         };
 
-        Ok((stats, outputs))
+        let elapsed = start.elapsed().as_secs_f64();
+        Ok((stats, outputs, elapsed))
     }
 }
 

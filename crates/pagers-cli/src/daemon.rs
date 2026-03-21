@@ -18,7 +18,7 @@ where
         match go_daemon(a.inner.wait)? {
             ForkOutcome::Parent => Ok(()),
             ForkOutcome::Child(notify_fd) => {
-                let (stats, _) = self.run(a.common(), false, term)?;
+                let (stats, _, _) = self.run(a.common(), false, term)?;
                 hold(&stats, &a.inner, term, notify_fd);
                 Ok(())
             }

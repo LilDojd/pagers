@@ -52,17 +52,23 @@ fn main() -> ExitCode {
 fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
     match cli.command {
         Command::Query(a) => {
-            ops::Query.run(a.common(), true, term)?;
+            let common = a.common();
+            let (stats, _, elapsed) = ops::Query.run(common, true, term)?;
+            maybe_print_summary(&stats, elapsed, "query", common);
         }
         Command::Touch(a) => {
-            ops::Touch {
+            let common = a.common();
+            let (stats, _, elapsed) = ops::Touch {
                 chunk_size: a.inner.chunk_size as usize,
                 timeout_secs: a.inner.timeout,
             }
-            .run(a.common(), true, term)?;
+            .run(common, true, term)?;
+            maybe_print_summary(&stats, elapsed, "touch", common);
         }
         Command::Evict(a) => {
-            ops::Evict.run(a.common(), true, term)?;
+            let common = a.common();
+            let (stats, _, elapsed) = ops::Evict.run(common, true, term)?;
+            maybe_print_summary(&stats, elapsed, "evict", common);
         }
         Command::Lock(a) => {
             let op = ops::Lock::from_args(&a.inner);
@@ -82,4 +88,19 @@ fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+fn maybe_print_summary(stats: &ops::Stats, elapsed: f64, mode: &str, common: &CommonArgs) {
+    use std::io::IsTerminal;
+
+    if common.verbosity.is_silent() {
+        return;
+    }
+    if std::io::stdout().is_terminal() {
+        return;
+    }
+    let format_str = common.output.as_ref().map(|f| match f {
+        OutputFormat::Kv => "kv",
+    });
+    pagers_core::output::print_summary(stats, elapsed, mode, format_str);
 }
