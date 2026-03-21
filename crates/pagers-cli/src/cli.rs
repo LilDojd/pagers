@@ -137,6 +137,7 @@ pub enum OutputFormat {
     Json,
 }
 
+
 fn styles() -> clap::builder::Styles {
     use anstyle::{AnsiColor, Style};
     clap::builder::Styles::styled()

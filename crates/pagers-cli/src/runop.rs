@@ -61,45 +61,35 @@ where
         let stats = Arc::new(ops::Stats::new());
         let start = Instant::now();
 
-        let outputs = if let Some(events_rx) = events_rx {
+        let tui_handle = events_rx.map(|rx| {
             let term_clone = Arc::clone(term);
             let stats_clone = Arc::clone(&stats);
             let tui_label = Self::LABEL.to_string();
-            let tui_handle = std::thread::spawn(move || {
+            std::thread::spawn(move || {
                 if let Err(e) =
-                    pagers_tui::run(events_rx, term_clone, stats_clone, &tui_label, start)
+                    pagers_tui::run(rx, term_clone, stats_clone, &tui_label, start)
                 {
                     ::tracing::error!("TUI error: {e}");
                 }
-            });
+            })
+        });
 
-            let outputs = crawl::crawl_and_process(
-                &common.paths,
-                &crawl_config,
-                self,
-                &range,
-                &stats,
-                events_tx.as_ref(),
-            );
-            drop(events_tx);
+        let outputs = crawl::crawl_and_process(
+            &common.paths,
+            &crawl_config,
+            self,
+            &range,
+            &stats,
+            events_tx.as_ref(),
+        );
+        drop(events_tx);
 
-            tui_handle.join().expect("TUI thread panicked");
-            outputs?
-        } else {
-            let outputs = crawl::crawl_and_process(
-                &common.paths,
-                &crawl_config,
-                self,
-                &range,
-                &stats,
-                events_tx.as_ref(),
-            );
-            drop(events_tx);
-            outputs?
-        };
+        if let Some(handle) = tui_handle {
+            handle.join().expect("TUI thread panicked");
+        }
 
         let elapsed = start.elapsed().as_secs_f64();
-        Ok((stats, outputs, elapsed))
+        Ok((stats, outputs?, elapsed))
     }
 }
 

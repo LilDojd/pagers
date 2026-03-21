@@ -8,7 +8,7 @@ pub use app::App;
 pub use state::FileState;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -46,33 +46,29 @@ pub fn run(
 
     let tui_rx = event::spawn_event_threads(rx, term);
     let mut app = App::new();
-    let quit = AtomicBool::new(false);
-    let done = AtomicBool::new(false);
+    let mut quit = false;
+    let mut done = false;
 
     while let Ok(evt) = tui_rx.recv() {
         let mut needs_draw = matches!(evt, event::TuiEvent::Core(_));
         match app.handle_event(evt) {
             app::ControlFlow::Continue => {}
-            app::ControlFlow::Done => {
-                done.store(true, Ordering::Relaxed);
-            }
-            app::ControlFlow::Quit => {
-                quit.store(true, Ordering::Relaxed);
-            }
+            app::ControlFlow::Done => done = true,
+            app::ControlFlow::Quit => quit = true,
         }
 
         // Drain any queued events before drawing to batch updates
-        if !done.load(Ordering::Relaxed) && !quit.load(Ordering::Relaxed) {
+        if !done && !quit {
             while let Ok(next) = tui_rx.try_recv() {
                 needs_draw |= matches!(next, event::TuiEvent::Core(_));
                 match app.handle_event(next) {
                     app::ControlFlow::Continue => {}
                     app::ControlFlow::Done => {
-                        done.store(true, Ordering::Relaxed);
+                        done = true;
                         break;
                     }
                     app::ControlFlow::Quit => {
-                        quit.store(true, Ordering::Relaxed);
+                        quit = true;
                         break;
                     }
                 }
@@ -95,12 +91,12 @@ pub fn run(
             })?;
         }
 
-        if done.load(Ordering::Relaxed) || quit.load(Ordering::Relaxed) {
+        if done || quit {
             break;
         }
     }
 
-    if !quit.load(Ordering::Relaxed) {
+    if !quit {
         let elapsed = start.elapsed().as_secs_f64();
         let files = app.visible_files(MAX_DISPLAY_FILES as usize);
         let n = files.len().min(MAX_DISPLAY_FILES as usize) as u16;

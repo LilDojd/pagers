@@ -54,37 +54,41 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
     match cli.command {
-        Command::Query(a) => {
-            let common = a.common();
-            let (stats, _, elapsed) = ops::Query.run(common, true, term)?;
-            maybe_print_summary::<ops::Query>(&stats, elapsed, common);
-        }
-        Command::Touch(a) => {
-            let common = a.common();
-            let (stats, _, elapsed) = ops::Touch.run(common, true, term)?;
-            maybe_print_summary::<ops::Touch>(&stats, elapsed, common);
-        }
-        Command::Evict(a) => {
-            let common = a.common();
-            let (stats, _, elapsed) = ops::Evict.run(common, true, term)?;
-            maybe_print_summary::<ops::Evict>(&stats, elapsed, common);
-        }
-        Command::Lock(a) => {
-            if a.inner.daemon {
-                ops::Lock.run_daemonized(&a, term)?;
-            } else {
-                ops::Lock.run(a.common(), false, term)?;
-            }
-        }
-        Command::Lockall(a) => {
-            if a.inner.daemon {
-                ops::Lockall.run_daemonized(&a, term)?;
-            } else {
-                ops::Lockall.run(a.common(), false, term)?;
-            }
-        }
+        Command::Query(a) => run_and_summarize(ops::Query, a.common(), term),
+        Command::Touch(a) => run_and_summarize(ops::Touch, a.common(), term),
+        Command::Evict(a) => run_and_summarize(ops::Evict, a.common(), term),
+        Command::Lock(a) => run_lock(ops::Lock, &a, term),
+        Command::Lockall(a) => run_lock(ops::Lockall, &a, term),
     }
+}
+
+fn run_and_summarize<O: RunOp>(
+    op: O,
+    common: &CommonArgs,
+    term: &Arc<AtomicBool>,
+) -> Result<(), Error>
+where
+    O::Output: 'static,
+{
+    let (stats, _, elapsed) = op.run(common, true, term)?;
+    maybe_print_summary::<O>(&stats, elapsed, common);
     Ok(())
+}
+
+fn run_lock<O: Daemonize>(
+    op: O,
+    a: &WithCommon<LockInner>,
+    term: &Arc<AtomicBool>,
+) -> Result<(), Error>
+where
+    O::Output: 'static,
+{
+    if a.inner.daemon {
+        op.run_daemonized(a, term)
+    } else {
+        op.run(a.common(), false, term)?;
+        Ok(())
+    }
 }
 
 fn maybe_print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, common: &CommonArgs) {

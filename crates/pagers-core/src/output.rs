@@ -112,27 +112,16 @@ fn print_kv(s: &Summary, label: &str) {
 }
 
 fn print_json(s: &Summary, label: &str) {
-    let mut map = serde_json::Map::new();
-    map.insert("files".into(), s.total_files.into());
-    map.insert("directories".into(), s.total_dirs.into());
-    map.insert(format!("{label}_pages"), s.pages_in_core.into());
-    map.insert("total_pages".into(), s.total_pages.into());
-    map.insert(format!("{label}_size"), s.in_core_size.into());
-    map.insert("total_size".into(), s.total_size.into());
-    map.insert(
-        format!("{label}_percent"),
-        serde_json::Number::from_f64(s.pct)
-            .unwrap_or_else(|| serde_json::Number::from(0))
-            .into(),
-    );
-    map.insert(
-        "elapsed".into(),
-        serde_json::Number::from_f64(s.elapsed)
-            .unwrap_or_else(|| serde_json::Number::from(0))
-            .into(),
-    );
-
-    let value = serde_json::Value::Object(map);
+    let value = serde_json::json!({
+        "files": s.total_files,
+        "directories": s.total_dirs,
+        format!("{label}_pages"): s.pages_in_core,
+        "total_pages": s.total_pages,
+        format!("{label}_size"): s.in_core_size,
+        "total_size": s.total_size,
+        format!("{label}_percent"): s.pct,
+        "elapsed": s.elapsed,
+    });
     println!("{value}");
 }
 
