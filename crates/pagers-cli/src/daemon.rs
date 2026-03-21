@@ -1,11 +1,45 @@
 use std::os::fd::OwnedFd;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use pagers_core::{mmap, ops, output};
 
-use crate::cli::LockInner;
+use crate::RunOp;
+use crate::cli::{LockInner, WithCommon};
 
-pub fn go_daemon(wait: bool) -> Option<OwnedFd> {
+pub(crate) trait Daemonize: RunOp
+where
+    Self::Output: 'static,
+{
+    fn from_args(args: &LockInner) -> Self;
+
+    fn run_daemonized(&self, a: &WithCommon<LockInner>, term: &Arc<AtomicBool>) {
+        let notify_fd = go_daemon(a.inner.wait);
+        let (stats, _) = self.run(a.common(), false, term);
+        hold(&stats, &a.inner, term, notify_fd);
+    }
+}
+
+impl Daemonize for ops::Lock {
+    fn from_args(args: &LockInner) -> Self {
+        Self {
+            touch: ops::Touch {
+                chunk_size: args.load.chunk_size as usize,
+                timeout_secs: args.load.timeout,
+            },
+        }
+    }
+}
+
+impl Daemonize for ops::Lockall {
+    fn from_args(args: &LockInner) -> Self {
+        Self {
+            lock: ops::Lock::from_args(args),
+        }
+    }
+}
+
+fn go_daemon(wait: bool) -> Option<OwnedFd> {
     let pipe = if wait {
         Some(nix::unistd::pipe().expect("pipe"))
     } else {
@@ -59,7 +93,7 @@ fn redirect_stdio() {
     }
 }
 
-pub fn daemon_hold(
+fn hold(
     stats: &ops::Stats,
     inner: &LockInner,
     term: &AtomicBool,
