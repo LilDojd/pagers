@@ -4,7 +4,7 @@ mod evict;
 mod lock;
 mod lockall;
 mod query;
-pub(crate) mod touch;
+mod touch;
 
 use std::fs::File;
 use std::path::Path;
@@ -76,37 +76,44 @@ impl Stats {
     }
 }
 
+fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
+    if file_len == 0 {
+        return None;
+    }
+    let offset = range.offset;
+    if offset >= file_len {
+        return None;
+    }
+    let len = match range.max_len {
+        Some(max) if (offset + max) < file_len => max as usize,
+        _ => (file_len - offset) as usize,
+    };
+    Some((offset, len))
+}
+
 pub fn send_file_start(
     path: &Path,
     range: &FileRange,
     tx: &Sender<Event>,
 ) -> crate::Result<()> {
-    let file =
-        File::open(path).map_err(|e| Error::io(path.display().to_string(), e))?;
-    let file_len = file
-        .metadata()
-        .map_err(|e| Error::io(path.display().to_string(), e))?
-        .len();
-    if file_len == 0 {
+    let io_err = |e| Error::io(path.display().to_string(), e);
+
+    let file = File::open(path).map_err(io_err)?;
+    let file_len = file.metadata().map_err(io_err)?.len();
+
+    let Some((offset, len)) = effective_range(file_len, range) else {
         return Ok(());
-    }
-    let offset = range.offset;
-    if offset >= file_len {
-        return Ok(());
-    }
-    let len_of_range = match range.max_len {
-        Some(max) if (offset + max) < file_len => max as usize,
-        _ => (file_len - offset) as usize,
     };
-    let pages_in_range = len_of_range.div_ceil(mmap::page_size());
+
+    let pages_in_range = len.div_ceil(mmap::page_size());
     let mmap = unsafe {
         MmapOptions::new()
             .offset(offset)
-            .len(len_of_range)
+            .len(len)
             .map(&file)
-            .map_err(|e| Error::io(path.display().to_string(), e))?
+            .map_err(io_err)?
     };
-    let residency = mmap::mincore_residency(&mmap, len_of_range)?;
+    let residency = mmap::mincore_residency(&mmap, len)?;
     let _ = tx.send(Event::FileStart {
         path: path.display().to_string(),
         total_pages: pages_in_range,
@@ -131,12 +138,11 @@ pub fn process_file<O: Op>(
     events: Option<&Sender<Event>>,
     discovered: bool,
 ) -> crate::Result<Option<O::Output>> {
-    let file =
-        File::open(path).map_err(|e| Error::io(path.display().to_string(), e))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| Error::io(path.display().to_string(), e))?;
-    let file_len = metadata.len();
+    let io_err = |e| Error::io(path.display().to_string(), e);
+    let path_str = || path.display().to_string();
+
+    let file = File::open(path).map_err(io_err)?;
+    let file_len = file.metadata().map_err(io_err)?.len();
 
     if file_len == 0 {
         return Ok(None);
@@ -151,25 +157,22 @@ pub fn process_file<O: Op>(
         });
     }
 
-    let len_of_range = match range.max_len {
+    let len = match range.max_len {
         Some(max) if (offset + max) < file_len => max as usize,
         _ => (file_len - offset) as usize,
     };
 
-    let page_size = mmap::page_size();
-    let pages_in_range = len_of_range.div_ceil(page_size);
+    let pages = len.div_ceil(mmap::page_size());
 
-    stats
-        .total_pages
-        .fetch_add(pages_in_range as i64, Ordering::Relaxed);
+    stats.total_pages.fetch_add(pages as i64, Ordering::Relaxed);
     stats.total_files.fetch_add(1, Ordering::Relaxed);
 
     let mmap = Arc::new(unsafe {
         MmapOptions::new()
             .offset(offset)
-            .len(len_of_range)
+            .len(len)
             .map(&file)
-            .map_err(|e| Error::io(path.display().to_string(), e))?
+            .map_err(io_err)?
     });
 
     #[cfg(target_os = "linux")]
@@ -177,23 +180,24 @@ pub fn process_file<O: Op>(
     #[cfg(not(target_os = "linux"))]
     let use_cachestat = false;
 
-    let pages_in_core: i64;
-    if use_cachestat {
-        pages_in_core = cachestat_count(&file, offset, len_of_range as u64)?;
+    // Count initial residency.
+    let pages_in_core = if use_cachestat {
+        cachestat_count(&file, offset, len as u64)?
     } else {
-        let residency = mmap::mincore_residency(&mmap, len_of_range)?;
-        pages_in_core = residency.iter().filter(|r| **r).count() as i64;
+        let residency = mmap::mincore_residency(&mmap, len)?;
+        let count = residency.iter().filter(|r| **r).count() as i64;
 
         if let Some(tx) = events
             && !discovered
         {
             let _ = tx.send(Event::FileStart {
-                path: path.display().to_string(),
-                total_pages: pages_in_range,
+                path: path_str(),
+                total_pages: pages,
                 residency,
             });
         }
-    }
+        count
+    };
 
     stats
         .total_pages_in_core
@@ -204,33 +208,33 @@ pub fn process_file<O: Op>(
         path,
         mmap: Arc::clone(&mmap),
         offset,
-        len: len_of_range,
+        len,
         events,
     };
 
     let output = op.execute(&ctx)?;
 
-    let final_in_core: i64;
-    if use_cachestat {
-        final_in_core = cachestat_count(&file, offset, len_of_range as u64)?;
+    // Count final residency and compute delta.
+    let final_in_core = if use_cachestat {
+        cachestat_count(&file, offset, len as u64)?
     } else {
-        let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
-        final_in_core = final_residency.iter().filter(|r| **r).count() as i64;
+        let residency = mmap::mincore_residency(&mmap, len)?;
+        let count = residency.iter().filter(|r| **r).count() as i64;
 
         if let Some(tx) = events {
             let _ = tx.send(Event::FileDone {
-                path: path.display().to_string(),
-                pages_in_core: final_in_core as usize,
-                total_pages: pages_in_range,
-                residency: final_residency,
+                path: path_str(),
+                pages_in_core: count as usize,
+                total_pages: pages,
+                residency,
             });
         }
-    }
+        count
+    };
 
-    let delta = final_in_core - pages_in_core;
     stats
         .total_pages_in_core
-        .fetch_add(delta, Ordering::Relaxed);
+        .fetch_add(final_in_core - pages_in_core, Ordering::Relaxed);
 
     Ok(Some(output))
 }

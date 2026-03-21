@@ -39,9 +39,9 @@ pub enum OutputFormat {
 
 pub fn pretty_size(bytes: i64) -> String {
     const KI: f64 = 1024.0;
-    const MI: f64 = 1024.0 * 1024.0;
-    const GI: f64 = 1024.0 * 1024.0 * 1024.0;
-    const TI: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
+    const MI: f64 = KI * KI;
+    const GI: f64 = KI * MI;
+    const TI: f64 = KI * GI;
 
     let b = bytes as f64;
     if bytes < 1024 {
@@ -107,12 +107,17 @@ impl Summary {
         }
     }
 
+    /// Label for the pages-in-core metric, varying by mode.
+    fn desc(&self) -> (&str, &str) {
+        match self.mode {
+            Mode::Touch => ("Touched", "touched"),
+            Mode::Evict => ("Evicted", "evicted"),
+            _ => ("Resident", "resident"),
+        }
+    }
+
     fn print_kv(&self) {
-        let desc = match self.mode {
-            Mode::Touch => "Touched",
-            Mode::Evict => "Evicted",
-            _ => "Resident",
-        };
+        let (desc, _) = self.desc();
         println!(
             "Files={} Directories={} \
              {desc}Pages={} TotalPages={} \
@@ -130,11 +135,7 @@ impl Summary {
     }
 
     fn print_json(&self) {
-        let desc = match self.mode {
-            Mode::Touch => "touched",
-            Mode::Evict => "evicted",
-            _ => "resident",
-        };
+        let (_, desc) = self.desc();
         // Manual JSON to avoid adding serde dependency
         println!(
             "{{\

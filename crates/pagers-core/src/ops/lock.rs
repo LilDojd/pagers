@@ -9,11 +9,18 @@ use crate::mmap;
 /// Touch pages into cache, then lock them in physical memory with mlock(2).
 pub struct Lock;
 
-/// Holds the mmap alive after mlock — drop unmaps and unlocks.
+/// Holds the mmap alive after mlock — dropping this unmaps and unlocks.
+///
+/// Fields are private because they exist solely for RAII: the `Arc<Mmap>`
+/// prevents munmap (which would release mlock), and the path is kept for
+/// diagnostics if needed in the future.
 pub struct LockedFile {
-    pub _path: String,
-    pub _mmap: Arc<Mmap>,
-    pub _len: usize,
+    #[allow(dead_code)]
+    path: String,
+    #[allow(dead_code)]
+    mmap: Arc<Mmap>,
+    #[allow(dead_code)]
+    len: usize,
 }
 
 impl Op for Lock {
@@ -23,9 +30,9 @@ impl Op for Lock {
         Touch.execute(ctx)?;
         mmap::mlock(&ctx.mmap, ctx.len)?;
         Ok(LockedFile {
-            _path: ctx.path.display().to_string(),
-            _mmap: Arc::clone(&ctx.mmap),
-            _len: ctx.len,
+            path: ctx.path.display().to_string(),
+            mmap: Arc::clone(&ctx.mmap),
+            len: ctx.len,
         })
     }
 }

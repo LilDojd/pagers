@@ -39,7 +39,7 @@ pub fn crawl_and_process<O: Op>(
     let discovered = if let Some(tx) = events {
         for path in &file_paths {
             if let Err(e) = ops::send_file_start(path, range, tx) {
-                ::tracing::warn!("{}: {e}", path.display());
+                tracing::warn!("{}: {e}", path.display());
             }
         }
         true
@@ -53,7 +53,7 @@ pub fn crawl_and_process<O: Op>(
             Ok(Some(output)) => outputs.push(output),
             Ok(None) => {}
             Err(e) => {
-                ::tracing::warn!("{e}");
+                tracing::warn!("{e}");
             }
         }
     }
@@ -74,7 +74,7 @@ fn collect_file_paths(
     if let Some(batch_path) = &crawl_config.batch {
         match read_batch_paths(batch_path, crawl_config.nul_delim) {
             Ok(batch_paths) => all_paths.extend(batch_paths),
-            Err(e) => ::tracing::warn!("batch file: {e}"),
+            Err(e) => tracing::warn!("batch file: {e}"),
         }
     }
 
@@ -112,7 +112,7 @@ fn collect_file_paths(
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
-                        ::tracing::warn!("{e}");
+                        tracing::warn!("{e}");
                         continue;
                     }
                 };
@@ -156,7 +156,7 @@ fn collect_file_paths(
         } else if path.is_file() {
             file_paths.push(path.clone());
         } else {
-            ::tracing::warn!("skipping {}: not a file or directory", path.display());
+            tracing::warn!("skipping {}: not a file or directory", path.display());
         }
     }
 
