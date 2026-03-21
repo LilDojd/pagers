@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 
 use pagers_core::{mmap, ops, output};
 
+use crate::Error;
 use crate::RunOp;
 use crate::cli::{LockInner, WithCommon};
 
@@ -13,10 +14,15 @@ where
 {
     fn from_args(args: &LockInner) -> Self;
 
-    fn run_daemonized(&self, a: &WithCommon<LockInner>, term: &Arc<AtomicBool>) {
-        let notify_fd = go_daemon(a.inner.wait);
-        let (stats, _) = self.run(a.common(), false, term);
-        hold(&stats, &a.inner, term, notify_fd);
+    fn run_daemonized(&self, a: &WithCommon<LockInner>, term: &Arc<AtomicBool>) -> Result<(), Error> {
+        match go_daemon(a.inner.wait)? {
+            ForkOutcome::Parent => Ok(()),
+            ForkOutcome::Child(notify_fd) => {
+                let (stats, _) = self.run(a.common(), false, term)?;
+                hold(&stats, &a.inner, term, notify_fd);
+                Ok(())
+            }
+        }
     }
 }
 
@@ -39,42 +45,45 @@ impl Daemonize for ops::Lockall {
     }
 }
 
-fn go_daemon(wait: bool) -> Option<OwnedFd> {
+enum ForkOutcome {
+    Parent,
+    Child(Option<OwnedFd>),
+}
+
+fn go_daemon(wait: bool) -> Result<ForkOutcome, Error> {
     let pipe = if wait {
-        Some(nix::unistd::pipe().expect("pipe"))
+        Some(nix::unistd::pipe()?)
     } else {
         None
     };
 
-    match unsafe { nix::unistd::fork() }.expect("fork") {
+    match unsafe { nix::unistd::fork() }? {
         nix::unistd::ForkResult::Parent { child: _ } => {
             if let Some((read_fd, _)) = pipe {
-                wait_for_child(read_fd);
+                wait_for_child(read_fd)?;
             }
-            std::process::exit(0);
+            Ok(ForkOutcome::Parent)
         }
         nix::unistd::ForkResult::Child => {
-            nix::unistd::setsid().expect("setsid");
+            nix::unistd::setsid()?;
             if let Some((_, write_fd)) = pipe {
-                Some(write_fd)
+                Ok(ForkOutcome::Child(Some(write_fd)))
             } else {
                 redirect_stdio();
-                None
+                Ok(ForkOutcome::Child(None))
             }
         }
     }
 }
 
-fn wait_for_child(read_fd: OwnedFd) -> ! {
+fn wait_for_child(read_fd: OwnedFd) -> Result<(), Error> {
     use std::io::Read;
     let mut file = std::fs::File::from(read_fd);
     let mut buf = [0u8; 1];
     match file.read(&mut buf) {
-        Ok(1) => std::process::exit(buf[0] as i32),
-        _ => {
-            ::tracing::error!("daemon shut down unexpectedly");
-            std::process::exit(1);
-        }
+        Ok(1) if buf[0] == 0 => Ok(()),
+        Ok(1) => Err(Error::DaemonExit(buf[0])),
+        _ => Err(Error::DaemonShutdown),
     }
 }
 

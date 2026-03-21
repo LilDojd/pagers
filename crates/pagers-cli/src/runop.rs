@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use pagers_core::{crawl, mmap, ops};
 
+use crate::Error;
 use crate::cli::CommonArgs;
 
 pub(crate) trait RunOp: ops::Op + Send + Sized + 'static
@@ -15,17 +16,15 @@ where
         common: &CommonArgs,
         tui: bool,
         term: &Arc<AtomicBool>,
-    ) -> (Arc<ops::Stats>, Vec<Self::Output>) {
+    ) -> Result<(Arc<ops::Stats>, Vec<Self::Output>), Error> {
         let (offset, max_len) = if let Some(ref range) = common.range {
             let page_size = mmap::page_size() as u64;
             let aligned = (range.start_b / page_size) * page_size;
-            let max_len = range.end_b.map(|end| {
-                if end <= aligned {
-                    ::tracing::error!("range limits out of order after page alignment");
-                    std::process::exit(1);
-                }
-                end - aligned
-            });
+            let max_len = match range.end_b {
+                Some(end) if end <= aligned => return Err(Error::RangeOrder),
+                Some(end) => Some(end - aligned),
+                None => None,
+            };
             (aligned, max_len)
         } else {
             (0, None)
@@ -96,7 +95,7 @@ where
             outputs
         };
 
-        (stats, outputs)
+        Ok((stats, outputs))
     }
 }
 
