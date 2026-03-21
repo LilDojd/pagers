@@ -105,6 +105,12 @@ pub fn send_file_start(path: &Path, range: &FileRange, tx: &Sender<Event>) -> an
     Ok(())
 }
 
+/// Cached page count via cachestat(2).
+#[cfg(target_os = "linux")]
+fn cachestat_count(file: &File, offset: u64, len: u64) -> anyhow::Result<i64> {
+    use std::os::unix::io::AsFd;
+    Ok(crate::cachestat::cached_pages(file.as_fd(), offset, len)? as i64)
+}
 /// Process a single file with the given operation.
 /// Returns `None` for empty files, `Some(output)` otherwise.
 pub fn process_file<O: Op>(
@@ -148,21 +154,32 @@ pub fn process_file<O: Op>(
             .map(&file)?
     });
 
-    let residency = mmap::mincore_residency(&mmap, len_of_range)?;
-    let pages_in_core: i64 = residency.iter().filter(|r| **r).count() as i64;
+    #[cfg(target_os = "linux")]
+    let use_cachestat = events.is_none() && crate::cachestat::supported();
+    #[cfg(not(target_os = "linux"))]
+    let use_cachestat = false;
+
+    let pages_in_core: i64;
+    if use_cachestat {
+        pages_in_core = cachestat_count(&file, offset, len_of_range as u64)?;
+    } else {
+        let residency = mmap::mincore_residency(&mmap, len_of_range)?;
+        pages_in_core = residency.iter().filter(|r| **r).count() as i64;
+
+        if let Some(tx) = events
+            && !discovered
+        {
+            let _ = tx.send(Event::FileStart {
+                path: path.display().to_string(),
+                total_pages: pages_in_range,
+                residency,
+            });
+        }
+    }
+
     stats
         .total_pages_in_core
         .fetch_add(pages_in_core, Ordering::Relaxed);
-
-    if let Some(tx) = events
-        && !discovered
-    {
-        let _ = tx.send(Event::FileStart {
-            path: path.display().to_string(),
-            total_pages: pages_in_range,
-            residency,
-        });
-    }
 
     let ctx = FileContext {
         file: &file,
@@ -175,21 +192,27 @@ pub fn process_file<O: Op>(
 
     let output = op.execute(&ctx)?;
 
-    let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
-    let final_in_core: i64 = final_residency.iter().filter(|r| **r).count() as i64;
+    let final_in_core: i64;
+    if use_cachestat {
+        final_in_core = cachestat_count(&file, offset, len_of_range as u64)?;
+    } else {
+        let final_residency = mmap::mincore_residency(&mmap, len_of_range)?;
+        final_in_core = final_residency.iter().filter(|r| **r).count() as i64;
+
+        if let Some(tx) = events {
+            let _ = tx.send(Event::FileDone {
+                path: path.display().to_string(),
+                pages_in_core: final_in_core as usize,
+                total_pages: pages_in_range,
+                residency: final_residency,
+            });
+        }
+    }
+
     let delta = final_in_core - pages_in_core;
     stats
         .total_pages_in_core
         .fetch_add(delta, Ordering::Relaxed);
-
-    if let Some(tx) = events {
-        let _ = tx.send(Event::FileDone {
-            path: path.display().to_string(),
-            pages_in_core: final_in_core as usize,
-            total_pages: pages_in_range,
-            residency: final_residency,
-        });
-    }
 
     Ok(Some(output))
 }
