@@ -1,6 +1,6 @@
 //! Linux cachestat(2) syscall wrapper (kernel 6.5+).
 
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::sync::OnceLock;
 
 use nix::errno::Errno;
@@ -43,6 +43,7 @@ pub fn supported() -> bool {
         // EBADF or EFAULT. If it doesn't exist, we get ENOSYS.
         let mut cs = Cachestat::zeroed();
         let range = CachestatRange { off: 0, len: 0 };
+        // SAFETY: repr(C) structs on the stack, invalid fd — no side effects.
         let ret = unsafe {
             libc::syscall(
                 SYS_CACHESTAT,
@@ -61,13 +62,14 @@ pub fn supported() -> bool {
 }
 
 /// Returns pages in cache for `[offset, offset+len)` of `fd`.
-pub fn cached_pages(fd: RawFd, offset: u64, len: u64) -> nix::Result<u64> {
+pub fn cached_pages(fd: BorrowedFd<'_>, offset: u64, len: u64) -> nix::Result<u64> {
     let range = CachestatRange { off: offset, len };
     let mut cs = Cachestat::zeroed();
+    // SAFETY: repr(C) structs on the stack, valid fd from caller.
     let ret = unsafe {
         libc::syscall(
             SYS_CACHESTAT,
-            fd,
+            fd.as_raw_fd(),
             &range as *const CachestatRange,
             &mut cs as *mut Cachestat,
             0u32,
@@ -84,7 +86,7 @@ pub fn cached_pages(fd: RawFd, offset: u64, len: u64) -> nix::Result<u64> {
 mod tests {
     use super::*;
     use std::io::Write;
-    use std::os::unix::io::AsRawFd;
+    use std::os::unix::io::AsFd;
 
     #[test]
     fn test_supported_returns_bool() {
@@ -104,7 +106,7 @@ mod tests {
         f.write_all(&data).unwrap();
         f.flush().unwrap();
 
-        let fd = f.as_file().as_raw_fd();
+        let fd = f.as_file().as_fd();
         let pages = cached_pages(fd, 0, (page_size * 4) as u64).unwrap();
         assert!(pages > 0 && pages <= 4, "expected 1-4 pages, got {pages}");
     }
@@ -114,7 +116,12 @@ mod tests {
         if !supported() {
             return;
         }
-        let err = cached_pages(-1, 0, 0).unwrap_err();
+        let f = tempfile::NamedTempFile::new().unwrap();
+        let fd = f.as_file().as_fd();
+        let raw = fd.as_raw_fd();
+        drop(f);
+        let bad_fd = unsafe { BorrowedFd::borrow_raw(raw) };
+        let err = cached_pages(bad_fd, 0, 0).unwrap_err();
         assert_eq!(err, Errno::EBADF);
     }
 }
