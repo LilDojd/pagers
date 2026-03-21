@@ -26,6 +26,8 @@ pub(crate) enum Error {
     DaemonExit(u8),
     #[error("{0}")]
     Nix(#[from] nix::errno::Errno),
+    #[error("{0}")]
+    Core(#[from] pagers_core::Error),
 }
 
 fn main() -> ExitCode {

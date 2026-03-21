@@ -36,14 +36,17 @@ pub fn mincore_residency(mmap: &Mmap, len: usize) -> nix::Result<Vec<bool>> {
     Ok(vec_out.into_iter().map(|x| x != 0).collect())
 }
 
-/// Returns the system page size.
+/// Returns the system page size (cached after first call).
 pub fn page_size() -> usize {
-    usize::try_from(
-        nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
-            .expect("Failed to fetch _SC_PAGESIZE")
-            .expect("_SC_PAGESIZE returned None"),
-    )
-    .unwrap()
+    static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PAGE_SIZE.get_or_init(|| {
+        usize::try_from(
+            nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
+                .expect("Failed to fetch _SC_PAGESIZE")
+                .expect("_SC_PAGESIZE returned None"),
+        )
+        .unwrap()
+    })
 }
 
 /// Issue madvise(MADV_WILLNEED) on a range of the mmap.

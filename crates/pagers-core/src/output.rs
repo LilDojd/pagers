@@ -6,19 +6,23 @@ use crate::mmap;
 use crate::ops::Stats;
 
 pub fn pretty_size(bytes: i64) -> String {
+    const KI: f64 = 1024.0;
+    const MI: f64 = 1024.0 * 1024.0;
+    const GI: f64 = 1024.0 * 1024.0 * 1024.0;
+    const TI: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
+
+    let b = bytes as f64;
     if bytes < 1024 {
-        return format!("{bytes}");
+        format!("{bytes}")
+    } else if b < MI {
+        format!("{:.1}K", b / KI)
+    } else if b < GI {
+        format!("{:.1}M", b / MI)
+    } else if b < TI {
+        format!("{:.1}G", b / GI)
+    } else {
+        format!("{:.1}T", b / TI)
     }
-    let kb = bytes / 1024;
-    if kb < 1024 {
-        return format!("{kb}K");
-    }
-    let mb = kb / 1024;
-    if mb < 1024 {
-        return format!("{mb}M");
-    }
-    let gb = mb / 1024;
-    format!("{gb}G")
 }
 
 pub fn print_summary(stats: &Stats, elapsed: f64, mode: &str, output_format: Option<&str>) {
@@ -88,9 +92,11 @@ mod tests {
     fn test_pretty_size() {
         assert_eq!(pretty_size(0), "0");
         assert_eq!(pretty_size(512), "512");
-        assert_eq!(pretty_size(1024), "1K");
-        assert_eq!(pretty_size(1024 * 1024), "1M");
-        assert_eq!(pretty_size(1024 * 1024 * 1024), "1G");
-        assert_eq!(pretty_size(2 * 1024 * 1024 * 1024), "2G");
+        assert_eq!(pretty_size(1024), "1.0K");
+        assert_eq!(pretty_size(1536), "1.5K");
+        assert_eq!(pretty_size(1024 * 1024), "1.0M");
+        assert_eq!(pretty_size(1024 * 1024 * 1024), "1.0G");
+        assert_eq!(pretty_size(2 * 1024 * 1024 * 1024), "2.0G");
+        assert_eq!(pretty_size(1024_i64.pow(4)), "1.0T");
     }
 }

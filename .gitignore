@@ -1,4 +1,5 @@
 /target
+/bigfile
 .pre-commit-config.yaml
 .devenv*
 devenv.lock

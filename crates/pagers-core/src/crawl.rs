@@ -2,7 +2,6 @@
 
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
 use dashmap::DashMap;
@@ -30,10 +29,9 @@ pub fn crawl_and_process<O: Op>(
     range: &FileRange,
     stats: &Stats,
     events: Option<&Sender<Event>>,
-) -> Vec<O::Output> {
-    let seen_inodes: Arc<DashMap<(u64, u64), ()>> = Arc::new(DashMap::new());
-    let outputs: Arc<std::sync::Mutex<Vec<O::Output>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
+) -> crate::Result<Vec<O::Output>> {
+    let seen_inodes: DashMap<(u64, u64), ()> = DashMap::new();
+    let mut outputs = Vec::new();
 
     let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
 
@@ -52,25 +50,17 @@ pub fn crawl_and_process<O: Op>(
     // Processing phase: execute the operation on each file.
     for path in &file_paths {
         match ops::process_file(op, path, range, stats, events, discovered) {
-            Ok(Some(output)) => {
-                outputs.lock().unwrap().push(output);
-            }
+            Ok(Some(output)) => outputs.push(output),
             Ok(None) => {}
             Err(e) => {
-                ::tracing::warn!("{}: {e}", path.display());
+                ::tracing::warn!("{e}");
             }
         }
     }
 
-    if let Err(e) = op.finish() {
-        ::tracing::error!("FATAL: {e}");
-        std::process::exit(1);
-    }
+    op.finish()?;
 
-    match Arc::try_unwrap(outputs) {
-        Ok(mutex) => mutex.into_inner().expect("mutex poisoned"),
-        Err(_) => panic!("Arc still has multiple owners"),
-    }
+    Ok(outputs)
 }
 
 fn collect_file_paths(

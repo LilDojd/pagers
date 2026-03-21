@@ -87,7 +87,7 @@ where
             drop(events_tx);
 
             tui_handle.join().expect("TUI thread panicked");
-            outputs
+            outputs?
         } else {
             let outputs = crawl::crawl_and_process(
                 &common.paths,
@@ -98,7 +98,7 @@ where
                 events_tx.as_ref(),
             );
             drop(events_tx);
-            outputs
+            outputs?
         };
 
         let elapsed = start.elapsed().as_secs_f64();
