@@ -150,19 +150,13 @@ pub fn process_file<O: Op>(
         return Ok(None);
     }
 
-    let offset = range.offset;
-    if offset >= file_len {
-        return Err(Error::OffsetBeyondFile {
+    let (offset, len) = effective_range(file_len, range).ok_or_else(|| {
+        Error::OffsetBeyondFile {
             path: path.to_path_buf(),
-            offset,
+            offset: range.offset,
             file_len,
-        });
-    }
-
-    let len = match range.max_len {
-        Some(max) if (offset + max) < file_len => max as usize,
-        _ => (file_len - offset) as usize,
-    };
+        }
+    })?;
 
     let pages = len.div_ceil(mmap::page_size());
 

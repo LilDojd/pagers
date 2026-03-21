@@ -1,4 +1,3 @@
-use std::fmt;
 use std::str::FromStr;
 
 use thiserror::Error;
@@ -171,23 +170,6 @@ fn parse_with_multiply(src: &[u8], multiply: u64) -> Result<u64, RangeError> {
         u64::try_from(result).map_err(|_| RangeError::PosOverflow)
     } else {
         Ok(0)
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Delimiter {
-    Dash,
-    DotDot,
-    Comma,
-}
-
-impl fmt::Display for Delimiter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Dash => "-",
-            Self::DotDot => "..",
-            Self::Comma => ",",
-        })
     }
 }
 

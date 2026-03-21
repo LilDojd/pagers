@@ -4,7 +4,8 @@ use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
-use dashmap::DashMap;
+use std::collections::HashSet;
+
 use ignore::WalkBuilder;
 
 use crate::events::Event;
@@ -30,10 +31,10 @@ pub fn crawl_and_process<O: Op>(
     stats: &Stats,
     events: Option<&Sender<Event>>,
 ) -> crate::Result<Vec<O::Output>> {
-    let seen_inodes: DashMap<(u64, u64), ()> = DashMap::new();
+    let mut seen_inodes: HashSet<(u64, u64)> = HashSet::new();
     let mut outputs = Vec::new();
 
-    let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
+    let file_paths = collect_file_paths(paths, crawl_config, &mut seen_inodes, stats);
 
     // Discovery phase: send FileStart for all files so the TUI sees them upfront.
     let discovered = if let Some(tx) = events {
@@ -66,7 +67,7 @@ pub fn crawl_and_process<O: Op>(
 fn collect_file_paths(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
-    seen_inodes: &DashMap<(u64, u64), ()>,
+    seen_inodes: &mut HashSet<(u64, u64)>,
     stats: &Stats,
 ) -> Vec<PathBuf> {
     let mut all_paths: Vec<PathBuf> = paths.to_vec();
@@ -128,9 +129,17 @@ fn collect_file_paths(
 
                 let entry_path = entry.path();
 
+                let needs_meta =
+                    crawl_config.max_file_size.is_some() || !crawl_config.count_hardlinks;
+                let meta = if needs_meta {
+                    entry_path.metadata().ok()
+                } else {
+                    None
+                };
+
                 if let Some(max_size) = crawl_config.max_file_size
-                    && let Ok(meta) = entry_path.metadata()
-                    && meta.len() > max_size
+                    && let Some(ref m) = meta
+                    && m.len() > max_size
                 {
                     continue;
                 }
@@ -139,14 +148,11 @@ fn collect_file_paths(
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::MetadataExt;
-                        if let Ok(meta) = entry_path.metadata()
-                            && meta.nlink() > 1
+                        if let Some(ref m) = meta
+                            && m.nlink() > 1
+                            && !seen_inodes.insert((m.dev(), m.ino()))
                         {
-                            let key = (meta.dev(), meta.ino());
-                            if seen_inodes.contains_key(&key) {
-                                continue;
-                            }
-                            seen_inodes.insert(key, ());
+                            continue;
                         }
                     }
                 }

@@ -10,17 +10,8 @@ use crate::mmap;
 pub struct Lock;
 
 /// Holds the mmap alive after mlock — dropping this unmaps and unlocks.
-///
-/// Fields are private because they exist solely for RAII: the `Arc<Mmap>`
-/// prevents munmap (which would release mlock), and the path is kept for
-/// diagnostics if needed in the future.
 pub struct LockedFile {
-    #[allow(dead_code)]
-    path: String,
-    #[allow(dead_code)]
-    mmap: Arc<Mmap>,
-    #[allow(dead_code)]
-    len: usize,
+    _mmap: Arc<Mmap>,
 }
 
 impl Op for Lock {
@@ -31,9 +22,7 @@ impl Op for Lock {
         Touch.execute(ctx)?;
         mmap::mlock(&ctx.mmap, ctx.len)?;
         Ok(LockedFile {
-            path: ctx.path.display().to_string(),
-            mmap: Arc::clone(&ctx.mmap),
-            len: ctx.len,
+            _mmap: Arc::clone(&ctx.mmap),
         })
     }
 }
