@@ -14,6 +14,7 @@ use std::sync::mpsc::Sender;
 
 use memmap2::{Mmap, MmapOptions};
 
+use crate::Error;
 use crate::events::Event;
 use crate::mmap;
 
@@ -26,9 +27,9 @@ pub use touch::Touch;
 /// Trait for file-level page cache operations.
 pub trait Op: Sync {
     type Output: Send;
-    fn execute(&self, ctx: &FileContext) -> anyhow::Result<Self::Output>;
+    fn execute(&self, ctx: &FileContext) -> crate::Result<Self::Output>;
 
-    fn finish(&self) -> anyhow::Result<()> {
+    fn finish(&self) -> crate::Result<()> {
         Ok(())
     }
 }
@@ -75,9 +76,17 @@ impl Stats {
     }
 }
 
-pub fn send_file_start(path: &Path, range: &FileRange, tx: &Sender<Event>) -> anyhow::Result<()> {
-    let file = File::open(path)?;
-    let file_len = file.metadata()?.len();
+pub fn send_file_start(
+    path: &Path,
+    range: &FileRange,
+    tx: &Sender<Event>,
+) -> crate::Result<()> {
+    let file =
+        File::open(path).map_err(|e| Error::io(path.display().to_string(), e))?;
+    let file_len = file
+        .metadata()
+        .map_err(|e| Error::io(path.display().to_string(), e))?
+        .len();
     if file_len == 0 {
         return Ok(());
     }
@@ -94,7 +103,8 @@ pub fn send_file_start(path: &Path, range: &FileRange, tx: &Sender<Event>) -> an
         MmapOptions::new()
             .offset(offset)
             .len(len_of_range)
-            .map(&file)?
+            .map(&file)
+            .map_err(|e| Error::io(path.display().to_string(), e))?
     };
     let residency = mmap::mincore_residency(&mmap, len_of_range)?;
     let _ = tx.send(Event::FileStart {
@@ -107,7 +117,7 @@ pub fn send_file_start(path: &Path, range: &FileRange, tx: &Sender<Event>) -> an
 
 /// Cached page count via cachestat(2).
 #[cfg(target_os = "linux")]
-fn cachestat_count(file: &File, offset: u64, len: u64) -> anyhow::Result<i64> {
+fn cachestat_count(file: &File, offset: u64, len: u64) -> crate::Result<i64> {
     use std::os::unix::io::AsFd;
     Ok(crate::cachestat::cached_pages(file.as_fd(), offset, len)? as i64)
 }
@@ -120,9 +130,12 @@ pub fn process_file<O: Op>(
     stats: &Stats,
     events: Option<&Sender<Event>>,
     discovered: bool,
-) -> anyhow::Result<Option<O::Output>> {
-    let file = File::open(path)?;
-    let metadata = file.metadata()?;
+) -> crate::Result<Option<O::Output>> {
+    let file =
+        File::open(path).map_err(|e| Error::io(path.display().to_string(), e))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| Error::io(path.display().to_string(), e))?;
     let file_len = metadata.len();
 
     if file_len == 0 {
@@ -131,7 +144,11 @@ pub fn process_file<O: Op>(
 
     let offset = range.offset;
     if offset >= file_len {
-        anyhow::bail!("file {} smaller than offset", path.display());
+        return Err(Error::OffsetBeyondFile {
+            path: path.to_path_buf(),
+            offset,
+            file_len,
+        });
     }
 
     let len_of_range = match range.max_len {
@@ -151,7 +168,8 @@ pub fn process_file<O: Op>(
         MmapOptions::new()
             .offset(offset)
             .len(len_of_range)
-            .map(&file)?
+            .map(&file)
+            .map_err(|e| Error::io(path.display().to_string(), e))?
     });
 
     #[cfg(target_os = "linux")]

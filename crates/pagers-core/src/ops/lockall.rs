@@ -10,11 +10,11 @@ pub struct Lockall {
 impl Op for Lockall {
     type Output = LockedFile;
 
-    fn execute(&self, ctx: &FileContext) -> anyhow::Result<LockedFile> {
+    fn execute(&self, ctx: &FileContext) -> crate::Result<LockedFile> {
         self.lock.execute(ctx)
     }
 
-    fn finish(&self) -> anyhow::Result<()> {
+    fn finish(&self) -> crate::Result<()> {
         mmap::mlockall_current()?;
         Ok(())
     }

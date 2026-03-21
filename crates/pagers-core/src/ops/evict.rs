@@ -5,7 +5,7 @@ pub struct Evict;
 impl Op for Evict {
     type Output = ();
 
-    fn execute(&self, ctx: &FileContext) -> anyhow::Result<()> {
+    fn execute(&self, ctx: &FileContext) -> crate::Result<()> {
         tracing::debug!("Evicting {}", ctx.path.display());
 
         #[cfg(target_os = "linux")]

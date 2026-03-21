@@ -11,7 +11,7 @@ pub struct Touch {
 impl Op for Touch {
     type Output = ();
 
-    fn execute(&self, ctx: &FileContext) -> anyhow::Result<()> {
+    fn execute(&self, ctx: &FileContext) -> crate::Result<()> {
         let mmap = &ctx.mmap;
         let len = ctx.len;
         let page_size = mmap::page_size();

@@ -20,7 +20,7 @@ pub struct LockedFile {
 impl Op for Lock {
     type Output = LockedFile;
 
-    fn execute(&self, ctx: &FileContext) -> anyhow::Result<LockedFile> {
+    fn execute(&self, ctx: &FileContext) -> crate::Result<LockedFile> {
         self.touch.execute(ctx)?;
         mmap::mlock(&ctx.mmap, ctx.len)?;
         Ok(LockedFile {
