@@ -2,8 +2,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
-use pagers_core::output::Mode;
-
 use crate::MAX_DISPLAY_PAGES;
 use crate::state::FileState;
 use crate::stats;
@@ -14,7 +12,7 @@ pub(crate) fn render_viewport(
     max_file_rows: u16,
     core_stats: &pagers_core::ops::Stats,
     elapsed: f64,
-    mode: Mode,
+    label: &str,
     area: Rect,
     buf: &mut ratatui::buffer::Buffer,
 ) {
@@ -25,7 +23,7 @@ pub(crate) fn render_viewport(
     ])
     .areas(area);
     render_refs_to_buf(files, max_file_rows, files_area, buf);
-    stats::render_summary(core_stats, elapsed, mode, stats_area, buf);
+    stats::render_summary(core_stats, elapsed, label, stats_area, buf);
 }
 
 pub(crate) fn render_refs_to_buf(

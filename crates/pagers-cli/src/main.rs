@@ -3,9 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use pagers_core::ops;
-use pagers_core::output::{self, Mode, OutputFormat as CoreOutputFormat};
-
-use cli::OutputFormat;
+use pagers_core::output::{OutputFormat as CoreOutputFormat, Summary};
 
 use clap::Parser;
 
@@ -58,39 +56,38 @@ fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
     match cli.command {
         Command::Query(a) => {
             let common = a.common();
-            let (stats, _, elapsed) = ops::Query.run(common, Mode::Query, true, term)?;
-            maybe_print_summary(&stats, elapsed, Mode::Query, common);
+            let (stats, _, elapsed) = ops::Query.run(common, "resident", true, term)?;
+            maybe_print_summary(&stats, elapsed, "resident", common);
         }
         Command::Touch(a) => {
             let common = a.common();
-            let (stats, _, elapsed) =
-                ops::Touch.run(common, Mode::Touch, true, term)?;
-            maybe_print_summary(&stats, elapsed, Mode::Touch, common);
+            let (stats, _, elapsed) = ops::Touch.run(common, "touched", true, term)?;
+            maybe_print_summary(&stats, elapsed, "touched", common);
         }
         Command::Evict(a) => {
             let common = a.common();
-            let (stats, _, elapsed) = ops::Evict.run(common, Mode::Evict, true, term)?;
-            maybe_print_summary(&stats, elapsed, Mode::Evict, common);
+            let (stats, _, elapsed) = ops::Evict.run(common, "evicted", true, term)?;
+            maybe_print_summary(&stats, elapsed, "evicted", common);
         }
         Command::Lock(a) => {
             if a.inner.daemon {
                 ops::Lock.run_daemonized(&a, term)?;
             } else {
-                ops::Lock.run(a.common(), Mode::Lock, false, term)?;
+                ops::Lock.run(a.common(), "locked", false, term)?;
             }
         }
         Command::Lockall(a) => {
             if a.inner.daemon {
                 ops::Lockall.run_daemonized(&a, term)?;
             } else {
-                ops::Lockall.run(a.common(), Mode::Lockall, false, term)?;
+                ops::Lockall.run(a.common(), "locked", false, term)?;
             }
         }
     }
     Ok(())
 }
 
-fn maybe_print_summary(stats: &ops::Stats, elapsed: f64, mode: Mode, common: &CommonArgs) {
+fn maybe_print_summary(stats: &ops::Stats, elapsed: f64, label: &str, common: &CommonArgs) {
     use std::io::IsTerminal;
 
     if common.verbosity.is_silent() {
@@ -99,9 +96,11 @@ fn maybe_print_summary(stats: &ops::Stats, elapsed: f64, mode: Mode, common: &Co
     if std::io::stdout().is_terminal() {
         return;
     }
-    let format = common.output.as_ref().map(|f| match f {
-        OutputFormat::Kv => CoreOutputFormat::Kv,
-        OutputFormat::Json => CoreOutputFormat::Json,
-    });
-    output::print_summary(stats, elapsed, mode, format);
+    let format = match &common.output {
+        Some(OutputFormat::Kv) => CoreOutputFormat::Kv,
+        Some(OutputFormat::Json) => CoreOutputFormat::Json,
+        None => CoreOutputFormat::Human,
+    };
+    let summary = Summary::from_stats(stats, elapsed);
+    format.print_summary(&summary, label);
 }

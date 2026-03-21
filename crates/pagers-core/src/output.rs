@@ -1,38 +1,25 @@
-//! Human-readable and machine-readable output formatting.
+//! Summary output formatting.
 
-use std::fmt;
 use std::sync::atomic::Ordering;
 
 use crate::mmap;
 use crate::ops::Stats;
 
-/// Operation mode, used to label summary output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    Query,
-    Touch,
-    Evict,
-    Lock,
-    Lockall,
-}
-
-impl fmt::Display for Mode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Query => "query",
-            Self::Touch => "touch",
-            Self::Evict => "evict",
-            Self::Lock => "lock",
-            Self::Lockall => "lockall",
-        })
-    }
-}
-
-/// Machine-readable output format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
+    Human,
     Kv,
     Json,
+}
+
+impl OutputFormat {
+    pub fn print_summary(self, summary: &Summary, label: &str) {
+        match self {
+            Self::Human => print_human(summary, label),
+            Self::Kv => print_kv(summary, label),
+            Self::Json => print_json(summary, label),
+        }
+    }
 }
 
 pub fn pretty_size(bytes: i64) -> String {
@@ -64,11 +51,10 @@ pub struct Summary {
     pub in_core_size: i64,
     pub pct: f64,
     pub elapsed: f64,
-    pub mode: Mode,
 }
 
 impl Summary {
-    pub fn from_stats(stats: &Stats, elapsed: f64, mode: Mode) -> Self {
+    pub fn from_stats(stats: &Stats, elapsed: f64) -> Self {
         let page_size = mmap::page_size() as i64;
         let total_pages = stats.total_pages.load(Ordering::Relaxed);
         let pages_in_core = stats.total_pages_in_core.load(Ordering::Relaxed);
@@ -92,107 +78,93 @@ impl Summary {
             in_core_size,
             pct,
             elapsed,
-            mode,
         }
-    }
-
-    /// Print in the given format, or human-readable if `None`.
-    pub fn print(&self, format: Option<OutputFormat>) {
-        match format {
-            Some(OutputFormat::Kv) => self.print_kv(),
-            Some(OutputFormat::Json) => self.print_json(),
-            None => self.print_human(),
-        }
-    }
-
-    /// Label for the pages-in-core metric, varying by mode.
-    fn desc(&self) -> (&str, &str) {
-        match self.mode {
-            Mode::Touch => ("Touched", "touched"),
-            Mode::Evict => ("Evicted", "evicted"),
-            _ => ("Resident", "resident"),
-        }
-    }
-
-    fn print_kv(&self) {
-        let (desc, _) = self.desc();
-        println!(
-            "Files={} Directories={} \
-             {desc}Pages={} TotalPages={} \
-             {desc}Size={} TotalSize={} \
-             {desc}Percent={:.3} Elapsed={:.5}",
-            self.total_files,
-            self.total_dirs,
-            self.pages_in_core,
-            self.total_pages,
-            self.in_core_size,
-            self.total_size,
-            self.pct,
-            self.elapsed,
-        );
-    }
-
-    fn print_json(&self) {
-        let (_, desc) = self.desc();
-        println!(
-            "{{\
-            \"files\":{},\
-            \"directories\":{},\
-            \"{desc}_pages\":{},\
-            \"total_pages\":{},\
-            \"{desc}_size\":{},\
-            \"total_size\":{},\
-            \"{desc}_percent\":{:.3},\
-            \"elapsed\":{:.5}\
-            }}",
-            self.total_files,
-            self.total_dirs,
-            self.pages_in_core,
-            self.total_pages,
-            self.in_core_size,
-            self.total_size,
-            self.pct,
-            self.elapsed,
-        );
-    }
-
-    fn print_human(&self) {
-        println!("           Files: {}", self.total_files);
-        println!("     Directories: {}", self.total_dirs);
-        match self.mode {
-            Mode::Touch => println!(
-                "   Touched Pages: {} ({})",
-                self.total_pages,
-                pretty_size(self.total_size)
-            ),
-            Mode::Evict => println!(
-                "   Evicted Pages: {} ({})",
-                self.total_pages,
-                pretty_size(self.total_size)
-            ),
-            _ => {
-                print!(
-                    "  Resident Pages: {}/{}  ",
-                    self.pages_in_core, self.total_pages,
-                );
-                print!(
-                    "{}/{}  ",
-                    pretty_size(self.in_core_size),
-                    pretty_size(self.total_size)
-                );
-                if self.total_pages > 0 {
-                    print!("{:.3}%", self.pct);
-                }
-                println!();
-            }
-        }
-        println!("         Elapsed: {:.5} seconds", self.elapsed);
     }
 }
 
-/// Print summary. Pass `None` for human-readable, `Some(format)` for machine-readable.
-pub fn print_summary(stats: &Stats, elapsed: f64, mode: Mode, format: Option<OutputFormat>) {
-    Summary::from_stats(stats, elapsed, mode).print(format);
+// ── Formatters ──────────────────────────────────────────────────────────────
+
+/// Capitalize the first character of a string.
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+fn print_kv(s: &Summary, label: &str) {
+    let cap = capitalize(label);
+    println!(
+        "Files={} Directories={} \
+         {cap}Pages={} TotalPages={} \
+         {cap}Size={} TotalSize={} \
+         {cap}Percent={:.3} Elapsed={:.5}",
+        s.total_files,
+        s.total_dirs,
+        s.pages_in_core,
+        s.total_pages,
+        s.in_core_size,
+        s.total_size,
+        s.pct,
+        s.elapsed,
+    );
+}
+
+fn print_json(s: &Summary, label: &str) {
+    let mut map = serde_json::Map::new();
+    map.insert("files".into(), s.total_files.into());
+    map.insert("directories".into(), s.total_dirs.into());
+    map.insert(format!("{label}_pages"), s.pages_in_core.into());
+    map.insert("total_pages".into(), s.total_pages.into());
+    map.insert(format!("{label}_size"), s.in_core_size.into());
+    map.insert("total_size".into(), s.total_size.into());
+    map.insert(
+        format!("{label}_percent"),
+        serde_json::Number::from_f64(s.pct)
+            .unwrap_or_else(|| serde_json::Number::from(0))
+            .into(),
+    );
+    map.insert(
+        "elapsed".into(),
+        serde_json::Number::from_f64(s.elapsed)
+            .unwrap_or_else(|| serde_json::Number::from(0))
+            .into(),
+    );
+
+    let value = serde_json::Value::Object(map);
+    println!("{value}");
+}
+
+fn print_human(s: &Summary, label: &str) {
+    let cap = capitalize(label);
+    println!("           Files: {}", s.total_files);
+    println!("     Directories: {}", s.total_dirs);
+    match label {
+        "resident" => {
+            print!(
+                "  Resident Pages: {}/{}  ",
+                s.pages_in_core, s.total_pages,
+            );
+            print!(
+                "{}/{}  ",
+                pretty_size(s.in_core_size),
+                pretty_size(s.total_size)
+            );
+            if s.total_pages > 0 {
+                print!("{:.3}%", s.pct);
+            }
+            println!();
+        }
+        _ => {
+            println!(
+                "  {cap:>8} Pages: {} ({})",
+                s.total_pages,
+                pretty_size(s.total_size)
+            );
+        }
+    }
+    println!("         Elapsed: {:.5} seconds", s.elapsed);
 }
 
 #[cfg(test)]
@@ -219,11 +191,9 @@ mod tests {
     #[test]
     fn test_summary_from_stats_zero() {
         let stats = Stats::new();
-        let summary = Summary::from_stats(&stats, 1.0, Mode::Query);
+        let summary = Summary::from_stats(&stats, 1.0);
         assert_eq!(summary.total_files, 0);
-        assert_eq!(summary.total_dirs, 0);
         assert_eq!(summary.total_pages, 0);
-        assert_eq!(summary.pages_in_core, 0);
         assert!((summary.pct - 0.0).abs() < f64::EPSILON);
     }
 
@@ -233,16 +203,14 @@ mod tests {
         let stats = Stats::new();
         stats.total_pages.store(200, Ordering::Relaxed);
         stats.total_pages_in_core.store(100, Ordering::Relaxed);
-        let summary = Summary::from_stats(&stats, 0.5, Mode::Query);
+        let summary = Summary::from_stats(&stats, 0.5);
         assert!((summary.pct - 50.0).abs() < 0.001);
     }
 
     #[test]
-    fn test_mode_display() {
-        assert_eq!(Mode::Query.to_string(), "query");
-        assert_eq!(Mode::Touch.to_string(), "touch");
-        assert_eq!(Mode::Evict.to_string(), "evict");
-        assert_eq!(Mode::Lock.to_string(), "lock");
-        assert_eq!(Mode::Lockall.to_string(), "lockall");
+    fn test_capitalize() {
+        assert_eq!(capitalize("touched"), "Touched");
+        assert_eq!(capitalize("resident"), "Resident");
+        assert_eq!(capitalize(""), "");
     }
 }

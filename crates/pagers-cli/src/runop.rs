@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use pagers_core::output::Mode;
 use pagers_core::{crawl, mmap, ops};
 
 use crate::Error;
@@ -16,11 +15,12 @@ where
     Self::Output: 'static,
 {
     /// Run the operation. Returns (stats, outputs, elapsed_secs).
+    /// `label` is the operation descriptor for output (e.g. `"resident"`, `"touched"`).
     /// When TUI is active, summary is printed by TUI; caller should only print for non-TUI.
     fn run(
         &self,
         common: &CommonArgs,
-        mode: Mode,
+        label: &str,
         tui: bool,
         term: &Arc<AtomicBool>,
     ) -> RunResult<Self::Output> {
@@ -66,9 +66,10 @@ where
         let outputs = if let Some(events_rx) = events_rx {
             let term_clone = Arc::clone(term);
             let stats_clone = Arc::clone(&stats);
+            let tui_label = label.to_string();
             let tui_handle = std::thread::spawn(move || {
                 if let Err(e) =
-                    pagers_tui::run(events_rx, term_clone, stats_clone, mode, start)
+                    pagers_tui::run(events_rx, term_clone, stats_clone, &tui_label, start)
                 {
                     ::tracing::error!("TUI error: {e}");
                 }

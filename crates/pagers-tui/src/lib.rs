@@ -15,7 +15,6 @@ use std::time::Instant;
 use color_eyre::Result;
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::ops::Stats;
-use pagers_core::output::Mode;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{TerminalOptions, Viewport};
@@ -28,7 +27,7 @@ pub fn run(
     rx: mpsc::Receiver<CoreEvent>,
     term: Arc<AtomicBool>,
     core_stats: Arc<Stats>,
-    mode: Mode,
+    label: &str,
     start: Instant,
 ) -> Result<()> {
     color_eyre::install()?;
@@ -89,7 +88,7 @@ pub fn run(
                     MAX_DISPLAY_FILES,
                     &core_stats,
                     elapsed,
-                    mode,
+                    label,
                     frame.area(),
                     frame.buffer_mut(),
                 );
@@ -113,7 +112,7 @@ pub fn run(
                 MAX_DISPLAY_FILES,
                 &core_stats,
                 elapsed,
-                mode,
+                label,
                 buf.area,
                 buf,
             );

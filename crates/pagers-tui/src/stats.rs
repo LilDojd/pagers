@@ -8,14 +8,14 @@ use ratatui::widgets::Widget;
 
 use pagers_core::mmap;
 use pagers_core::ops::Stats;
-use pagers_core::output::{Mode, pretty_size};
+use pagers_core::output::pretty_size;
 
 pub(crate) const SUMMARY_LINES: u16 = 4;
 
 pub(crate) fn render_summary(
     stats: &Stats,
     elapsed: f64,
-    mode: Mode,
+    label: &str,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -30,34 +30,33 @@ pub(crate) fn render_summary(
 
     let label_style = Style::default().fg(Color::DarkGray);
 
-    let pages_line = match mode {
-        Mode::Touch => Line::from(vec![
-            Span::styled("   Touched Pages: ", label_style),
-            Span::raw(format!("{total_pages} ({})", pretty_size(total_size))),
-        ]),
-        Mode::Evict => Line::from(vec![
-            Span::styled("   Evicted Pages: ", label_style),
-            Span::raw(format!("{total_pages} ({})", pretty_size(total_size))),
-        ]),
-        _ => {
-            let pct = if total_pages > 0 {
-                100.0 * pages_in_core as f64 / total_pages as f64
-            } else {
-                0.0
-            };
-            let mut spans = vec![
-                Span::styled("  Resident Pages: ", label_style),
-                Span::raw(format!(
-                    "{pages_in_core}/{total_pages}  {}/{}",
-                    pretty_size(in_core_size),
-                    pretty_size(total_size)
-                )),
-            ];
-            if total_pages > 0 {
-                spans.push(Span::raw(format!("  {pct:.3}%")));
-            }
-            Line::from(spans)
+    let pages_line = if label == "resident" {
+        let pct = if total_pages > 0 {
+            100.0 * pages_in_core as f64 / total_pages as f64
+        } else {
+            0.0
+        };
+        let mut spans = vec![
+            Span::styled("  Resident Pages: ", label_style),
+            Span::raw(format!(
+                "{pages_in_core}/{total_pages}  {}/{}",
+                pretty_size(in_core_size),
+                pretty_size(total_size)
+            )),
+        ];
+        if total_pages > 0 {
+            spans.push(Span::raw(format!("  {pct:.3}%")));
         }
+        Line::from(spans)
+    } else {
+        let mut cap = label.to_string();
+        if let Some(c) = cap.get_mut(0..1) {
+            c.make_ascii_uppercase();
+        }
+        Line::from(vec![
+            Span::styled(format!("  {cap:>8} Pages: "), label_style),
+            Span::raw(format!("{total_pages} ({})", pretty_size(total_size))),
+        ])
     };
 
     let lines = [
