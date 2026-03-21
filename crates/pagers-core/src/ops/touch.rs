@@ -1,12 +1,16 @@
-use std::time::Instant;
-
 use super::{FileContext, Op};
 use crate::mmap;
 
-pub struct Touch {
-    pub chunk_size: usize,
-    pub timeout_secs: f64,
-}
+/// 2 MiB per fadvise call stays under Linux's `max_sane_readahead()` cap.
+const FADVISE_STEP: usize = 2 * 1024 * 1024;
+
+/// How often to send TUI progress during the sequential page walk.
+/// 512 pages = 2 MiB at 4K page size — fast enough for smooth display,
+/// infrequent enough to avoid mincore overhead.
+const PROGRESS_INTERVAL: usize = 512;
+
+/// Readahead via fadvise, then walk every page with read_volatile.
+pub struct Touch;
 
 impl Op for Touch {
     type Output = ();
@@ -14,94 +18,87 @@ impl Op for Touch {
     fn execute(&self, ctx: &FileContext) -> crate::Result<()> {
         let mmap = &ctx.mmap;
         let len = ctx.len;
+
+        if len == 0 {
+            return Ok(());
+        }
+
         let page_size = mmap::page_size();
         let total_pages = len.div_ceil(page_size);
-        let timeout = std::time::Duration::from_secs_f64(self.timeout_secs);
-        let start = Instant::now();
 
-        // Linux's madvise(MADV_WILLNEED) silently caps readahead per call via
-        // max_sane_readahead(). Use a small step size for madvise to avoid gaps.
-        let advise_step = if cfg!(target_os = "linux") {
-            self.chunk_size.min(2 * 1024 * 1024)
-        } else {
-            self.chunk_size
-        };
+        // Phase 1: kick off async readahead
+        initiate_readahead(ctx);
 
-        for off in (0..len).step_by(advise_step) {
-            let chunk_len = (len - off).min(advise_step);
-            if let Err(e) = mmap::advise_willneed(mmap, off, chunk_len) {
-                tracing::warn!("madvise failed at offset {off}: {e}");
+        // Phase 2: walk every page to guarantee residency
+        for page_idx in 0..total_pages {
+            let offset = page_idx * page_size;
+            // SAFETY: offset < len, within the mmap region.
+            unsafe {
+                std::ptr::read_volatile(mmap.as_ptr().add(offset));
+            }
+
+            if let Some(tx) = ctx.events
+                && page_idx > 0
+                && page_idx % PROGRESS_INTERVAL == 0
+            {
+                if let Ok(residency) = mmap::mincore_residency(mmap, len) {
+                    let _ = tx.send(crate::events::Event::FileProgress {
+                        path: ctx.path.display().to_string(),
+                        residency,
+                    });
+                }
             }
         }
 
-        loop {
-            let residency = mmap::mincore_residency(mmap, len)?;
-            let resident_count = residency.iter().filter(|r| **r).count();
-
-            if let Some(tx) = ctx.events {
+        // Final progress event with full residency
+        if let Some(tx) = ctx.events {
+            if let Ok(residency) = mmap::mincore_residency(mmap, len) {
                 let _ = tx.send(crate::events::Event::FileProgress {
                     path: ctx.path.display().to_string(),
-                    residency: residency.clone(),
+                    residency,
                 });
-            }
-
-            if resident_count == total_pages {
-                break;
-            }
-
-            std::thread::sleep(std::time::Duration::from_millis(50));
-
-            if start.elapsed() >= timeout {
-                let non_resident: Vec<usize> = residency
-                    .iter()
-                    .enumerate()
-                    .filter(|&(_, r)| !r)
-                    .map(|(i, _)| i)
-                    .collect();
-
-                // Fault all pages in a background thread, poll mincore for progress
-                let mmap_ptr = mmap.as_ptr() as usize;
-                let fault_handle = std::thread::spawn(move || {
-                    for &page_idx in &non_resident {
-                        let offset = page_idx * page_size;
-                        if offset < len {
-                            unsafe {
-                                let _byte =
-                                    std::ptr::read_volatile((mmap_ptr as *const u8).add(offset));
-                            }
-                        }
-                    }
-                });
-
-                // Poll residency while faults are in progress
-                let poll_interval = std::time::Duration::from_millis(100);
-                while !fault_handle.is_finished() {
-                    std::thread::sleep(poll_interval);
-                    if let Some(tx) = ctx.events
-                        && let Ok(r) = mmap::mincore_residency(mmap, len)
-                    {
-                        let _ = tx.send(crate::events::Event::FileProgress {
-                            path: ctx.path.display().to_string(),
-                            residency: r,
-                        });
-                    }
-                }
-
-                fault_handle.join().expect("fault thread panicked");
-
-                // Final progress event
-                if let Some(tx) = ctx.events
-                    && let Ok(r) = mmap::mincore_residency(mmap, len)
-                {
-                    let _ = tx.send(crate::events::Event::FileProgress {
-                        path: ctx.path.display().to_string(),
-                        residency: r,
-                    });
-                }
-                break;
             }
         }
 
         Ok(())
+    }
+}
+
+fn initiate_readahead(ctx: &FileContext) {
+    let len = ctx.len;
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsFd;
+        let fd = ctx.file.as_fd();
+        let offset = ctx.offset as i64;
+        let len_i64 = len as i64;
+
+        let _ = nix::fcntl::posix_fadvise(
+            fd,
+            offset,
+            len_i64,
+            nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,
+        );
+        for off in (0..len).step_by(FADVISE_STEP) {
+            let chunk = (len - off).min(FADVISE_STEP) as i64;
+            let _ = nix::fcntl::posix_fadvise(
+                fd,
+                offset + off as i64,
+                chunk,
+                nix::fcntl::PosixFadviseAdvice::POSIX_FADV_WILLNEED,
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let step = FADVISE_STEP;
+        for off in (0..len).step_by(step) {
+            let chunk = (len - off).min(step);
+            if let Err(e) = mmap::advise_willneed(&ctx.mmap, off, chunk) {
+                tracing::warn!("madvise failed at offset {off}: {e}");
+            }
+        }
     }
 }

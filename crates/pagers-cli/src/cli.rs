@@ -36,7 +36,7 @@ pub enum Command {
     /// Show page cache residency
     Query(WithCommon<()>),
     /// Touch pages into memory
-    Touch(WithCommon<LoadArgs>),
+    Touch(WithCommon<()>),
     /// Evict pages from memory
     Evict(WithCommon<()>),
     /// Lock pages with mlock(2)
@@ -48,8 +48,7 @@ pub enum Command {
 impl Command {
     pub fn common(&self) -> &CommonArgs {
         match self {
-            Self::Query(a) | Self::Evict(a) => a.common(),
-            Self::Touch(a) => a.common(),
+            Self::Query(a) | Self::Touch(a) | Self::Evict(a) => a.common(),
             Self::Lock(a) | Self::Lockall(a) => a.common(),
         }
     }
@@ -116,21 +115,7 @@ pub struct CommonArgs {
 }
 
 #[derive(clap::Args, Debug)]
-pub struct LoadArgs {
-    /// Chunk size for madvise (e.g. 128M)
-    #[arg(long, default_value = "128M", value_parser = parse_size)]
-    pub chunk_size: u64,
-
-    /// Max seconds to wait for madvise convergence
-    #[arg(long, default_value = "30")]
-    pub timeout: f64,
-}
-
-#[derive(clap::Args, Debug)]
 pub struct LockInner {
-    #[command(flatten)]
-    pub load: LoadArgs,
-
     /// Run as daemon (block until signal)
     #[arg(short, long)]
     pub daemon: bool,

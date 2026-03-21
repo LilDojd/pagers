@@ -3,15 +3,13 @@ use super::{FileContext, Op};
 use crate::mmap;
 
 /// [`Lock`] + `mlockall(MCL_CURRENT)` after all files.
-pub struct Lockall {
-    pub lock: Lock,
-}
+pub struct Lockall;
 
 impl Op for Lockall {
     type Output = LockedFile;
 
     fn execute(&self, ctx: &FileContext) -> crate::Result<LockedFile> {
-        self.lock.execute(ctx)
+        Lock.execute(ctx)
     }
 
     fn finish(&self) -> crate::Result<()> {

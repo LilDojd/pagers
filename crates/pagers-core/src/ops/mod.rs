@@ -4,7 +4,7 @@ mod evict;
 mod lock;
 mod lockall;
 mod query;
-mod touch;
+pub(crate) mod touch;
 
 use std::fs::File;
 use std::path::Path;

@@ -6,11 +6,10 @@ use super::touch::Touch;
 use super::{FileContext, Op};
 use crate::mmap;
 
-pub struct Lock {
-    pub touch: Touch,
-}
+/// Touch pages into cache, then lock them in physical memory with mlock(2).
+pub struct Lock;
 
-/// Holds the mmap alive after mlock -- drop unmaps and unlocks.
+/// Holds the mmap alive after mlock — drop unmaps and unlocks.
 pub struct LockedFile {
     pub _path: String,
     pub _mmap: Arc<Mmap>,
@@ -21,7 +20,7 @@ impl Op for Lock {
     type Output = LockedFile;
 
     fn execute(&self, ctx: &FileContext) -> crate::Result<LockedFile> {
-        self.touch.execute(ctx)?;
+        Touch.execute(ctx)?;
         mmap::mlock(&ctx.mmap, ctx.len)?;
         Ok(LockedFile {
             _path: ctx.path.display().to_string(),

@@ -15,8 +15,6 @@ where
 {
     const MODE: Mode;
 
-    fn from_args(args: &LockInner) -> Self;
-
     fn run_daemonized(&self, a: &WithCommon<LockInner>, term: &Arc<AtomicBool>) -> Result<(), Error> {
         match go_daemon(a.inner.wait)? {
             ForkOutcome::Parent => Ok(()),
@@ -31,25 +29,10 @@ where
 
 impl Daemonize for ops::Lock {
     const MODE: Mode = Mode::Lock;
-
-    fn from_args(args: &LockInner) -> Self {
-        Self {
-            touch: ops::Touch {
-                chunk_size: args.load.chunk_size as usize,
-                timeout_secs: args.load.timeout,
-            },
-        }
-    }
 }
 
 impl Daemonize for ops::Lockall {
     const MODE: Mode = Mode::Lockall;
-
-    fn from_args(args: &LockInner) -> Self {
-        Self {
-            lock: ops::Lock::from_args(args),
-        }
-    }
 }
 
 enum ForkOutcome {

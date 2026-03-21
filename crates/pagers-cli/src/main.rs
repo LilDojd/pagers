@@ -61,11 +61,8 @@ fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
         }
         Command::Touch(a) => {
             let common = a.common();
-            let (stats, _, elapsed) = ops::Touch {
-                chunk_size: a.inner.chunk_size as usize,
-                timeout_secs: a.inner.timeout,
-            }
-            .run(common, Mode::Touch, true, term)?;
+            let (stats, _, elapsed) =
+                ops::Touch.run(common, Mode::Touch, true, term)?;
             maybe_print_summary(&stats, elapsed, Mode::Touch, common);
         }
         Command::Evict(a) => {
@@ -74,19 +71,17 @@ fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
             maybe_print_summary(&stats, elapsed, Mode::Evict, common);
         }
         Command::Lock(a) => {
-            let op = ops::Lock::from_args(&a.inner);
             if a.inner.daemon {
-                op.run_daemonized(&a, term)?;
+                ops::Lock.run_daemonized(&a, term)?;
             } else {
-                op.run(a.common(), Mode::Lock, false, term)?;
+                ops::Lock.run(a.common(), Mode::Lock, false, term)?;
             }
         }
         Command::Lockall(a) => {
-            let op = ops::Lockall::from_args(&a.inner);
             if a.inner.daemon {
-                op.run_daemonized(&a, term)?;
+                ops::Lockall.run_daemonized(&a, term)?;
             } else {
-                op.run(a.common(), Mode::Lockall, false, term)?;
+                ops::Lockall.run(a.common(), Mode::Lockall, false, term)?;
             }
         }
     }
