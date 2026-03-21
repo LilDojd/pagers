@@ -179,10 +179,10 @@ fn test_max_file_size_filter() {
     let dir = tempfile::tempdir().unwrap();
 
     let small = dir.path().join("small.dat");
-    fs::write(&small, &vec![0u8; 100]).unwrap();
+    fs::write(&small, vec![0u8; 100]).unwrap();
 
     let large = dir.path().join("large.dat");
-    fs::write(&large, &vec![0u8; 100_000]).unwrap();
+    fs::write(&large, vec![0u8; 100_000]).unwrap();
 
     let output = pagers_bin()
         .args(["query", "-m", "1k", dir.path().to_str().unwrap()])
@@ -205,7 +205,7 @@ fn test_max_file_size_filter() {
 fn test_touch_then_query_shows_resident() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, &vec![0xABu8; 4096 * 50]).unwrap();
+    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
 
     let output = pagers_bin()
         .args(["touch", file_path.to_str().unwrap()])

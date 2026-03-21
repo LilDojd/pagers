@@ -9,6 +9,8 @@ use pagers_core::{crawl, mmap, ops};
 use crate::Error;
 use crate::cli::CommonArgs;
 
+pub(crate) type RunResult<O> = Result<(Arc<ops::Stats>, Vec<O>, f64), Error>;
+
 pub(crate) trait RunOp: ops::Op + Send + Sized + 'static
 where
     Self::Output: 'static,
@@ -21,7 +23,7 @@ where
         mode: Mode,
         tui: bool,
         term: &Arc<AtomicBool>,
-    ) -> Result<(Arc<ops::Stats>, Vec<Self::Output>, f64), Error> {
+    ) -> RunResult<Self::Output> {
         let (offset, max_len) = if let Some(ref range) = common.range {
             let page_size = mmap::page_size() as u64;
             let aligned = (range.start_b / page_size) * page_size;
