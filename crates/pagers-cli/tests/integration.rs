@@ -242,6 +242,211 @@ fn build_out_dir() -> std::path::PathBuf {
 }
 
 #[test]
+fn test_evict_then_query_runs_successfully() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+
+    let output = pagers_bin()
+        .args(["touch", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = pagers_bin()
+        .args(["evict", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Evicted Pages:"), "stdout: {stdout}");
+
+    let output = pagers_bin()
+        .args(["query", "-o", "kv", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=1"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_query_empty_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("empty.dat");
+    fs::File::create(&file_path).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Files: 0") || stdout.contains("TotalPages=0"),
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
+fn test_query_nonexistent_file() {
+    let output = pagers_bin()
+        .args(["query", "/nonexistent/path/file.dat"])
+        .output()
+        .unwrap();
+
+    let _ = output.status;
+}
+
+#[test]
+fn test_query_with_range() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0u8; 4096 * 100]).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-p",
+            "0..100K",
+            "-o",
+            "kv",
+            file_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=1"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_query_with_ignore_pattern() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("keep.txt"), vec![0u8; 4096]).unwrap();
+    fs::write(dir.path().join("skip.log"), vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-i",
+            "*.log",
+            "-o",
+            "kv",
+            dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Files=1"),
+        "should skip .log file, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_query_with_filter_pattern() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("data.bin"), vec![0u8; 4096]).unwrap();
+    fs::write(dir.path().join("notes.txt"), vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-I",
+            "*.bin",
+            "-o",
+            "kv",
+            dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Files=1"),
+        "should only process .bin file, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_touch_json_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0u8; 4096 * 10]).unwrap();
+
+    let output = pagers_bin()
+        .args(["touch", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with('{'), "expected JSON, got: {stdout}");
+    assert!(
+        stdout.contains("\"touched_pages\":"),
+        "expected touched_ prefix in JSON, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_evict_json_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0u8; 4096 * 10]).unwrap();
+
+    let output = pagers_bin()
+        .args(["evict", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with('{'), "expected JSON, got: {stdout}");
+    assert!(
+        stdout.contains("\"evicted_pages\":"),
+        "expected evicted_ prefix in JSON, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_query_multiple_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let f1 = dir.path().join("a.dat");
+    let f2 = dir.path().join("b.dat");
+    fs::write(&f1, vec![0u8; 4096]).unwrap();
+    fs::write(&f2, vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-o",
+            "kv",
+            f1.to_str().unwrap(),
+            f2.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=2"), "stdout: {stdout}");
+}
+
+#[test]
 fn test_completions_zsh() {
     let dir = build_out_dir();
     let content =

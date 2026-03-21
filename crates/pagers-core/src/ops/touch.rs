@@ -40,24 +40,23 @@ impl Op for Touch {
             if let Some(tx) = ctx.events
                 && page_idx > 0
                 && page_idx % PROGRESS_INTERVAL == 0
+                && let Ok(residency) = mmap::mincore_residency(mmap, len)
             {
-                if let Ok(residency) = mmap::mincore_residency(mmap, len) {
-                    let _ = tx.send(crate::events::Event::FileProgress {
-                        path: ctx.path.display().to_string(),
-                        residency,
-                    });
-                }
-            }
-        }
-
-        // Final progress event with full residency
-        if let Some(tx) = ctx.events {
-            if let Ok(residency) = mmap::mincore_residency(mmap, len) {
                 let _ = tx.send(crate::events::Event::FileProgress {
                     path: ctx.path.display().to_string(),
                     residency,
                 });
             }
+        }
+
+        // Final progress event with full residency
+        if let Some(tx) = ctx.events
+            && let Ok(residency) = mmap::mincore_residency(mmap, len)
+        {
+            let _ = tx.send(crate::events::Event::FileProgress {
+                path: ctx.path.display().to_string(),
+                residency,
+            });
         }
 
         Ok(())

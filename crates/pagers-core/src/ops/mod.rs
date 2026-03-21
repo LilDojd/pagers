@@ -234,3 +234,162 @@ pub fn process_file<O: Op>(
 
     Ok(Some(output))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn create_temp_file(pages: usize) -> (tempfile::NamedTempFile, usize) {
+        let page_size = mmap::page_size();
+        let size = page_size * pages;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(&vec![0xABu8; size]).unwrap();
+        f.flush().unwrap();
+        (f, size)
+    }
+
+    #[test]
+    fn test_process_file_query_counts_pages() {
+        let (f, _size) = create_temp_file(4);
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+        let result = process_file(&Query, f.path(), &range, &stats, None, false).unwrap();
+        assert!(result.is_some());
+        assert_eq!(stats.total_pages.load(Ordering::Relaxed), 4);
+        assert_eq!(stats.total_files.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_process_file_empty_file_returns_none() {
+        let f = tempfile::NamedTempFile::new().unwrap();
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+        let result = process_file(&Query, f.path(), &range, &stats, None, false).unwrap();
+        assert!(result.is_none());
+        assert_eq!(stats.total_files.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_process_file_offset_beyond_file() {
+        let (f, _) = create_temp_file(1);
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 1_000_000,
+            max_len: None,
+        };
+        let result = process_file(&Query, f.path(), &range, &stats, None, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Error::OffsetBeyondFile { .. }),
+            "expected OffsetBeyondFile, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_process_file_with_max_len() {
+        let (f, _) = create_temp_file(8);
+        let page_size = mmap::page_size();
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 0,
+            max_len: Some((page_size * 2) as u64),
+        };
+        process_file(&Query, f.path(), &range, &stats, None, false).unwrap();
+        assert_eq!(stats.total_pages.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn test_process_file_touch_makes_resident() {
+        let (f, size) = create_temp_file(4);
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+
+        process_file(&Evict, f.path(), &range, &stats, None, false).unwrap();
+
+        let stats2 = Stats::new();
+        process_file(&Touch, f.path(), &range, &stats2, None, false).unwrap();
+
+        let file = File::open(f.path()).unwrap();
+        let mmap_check = unsafe {
+            memmap2::MmapOptions::new().len(size).map(&file).unwrap()
+        };
+        let residency = mmap::mincore_residency(&mmap_check, size).unwrap();
+        assert!(
+            residency.iter().all(|&r| r),
+            "expected all pages resident after touch"
+        );
+    }
+
+    #[test]
+    fn test_process_file_evict_succeeds() {
+        let (f, _) = create_temp_file(4);
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+
+        let result = process_file(&Evict, f.path(), &range, &stats, None, false);
+        assert!(result.is_ok());
+        assert_eq!(stats.total_files.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_process_file_sends_events() {
+        let (f, _) = create_temp_file(4);
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        process_file(&Query, f.path(), &range, &stats, Some(&tx), false).unwrap();
+        drop(tx);
+
+        let events: Vec<_> = rx.iter().collect();
+        assert!(events.len() >= 2, "expected at least 2 events, got {}", events.len());
+        assert!(matches!(&events[0], crate::events::Event::FileStart { .. }));
+        assert!(matches!(
+            events.last().unwrap(),
+            crate::events::Event::FileDone { .. }
+        ));
+    }
+
+    #[test]
+    fn test_process_file_nonexistent_returns_error() {
+        let stats = Stats::new();
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+        let result = process_file(
+            &Query,
+            std::path::Path::new("/nonexistent/file.dat"),
+            &range,
+            &stats,
+            None,
+            false,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stats_default() {
+        let stats = Stats::default();
+        assert_eq!(stats.total_pages.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.total_pages_in_core.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.total_files.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.total_dirs.load(Ordering::Relaxed), 0);
+    }
+}

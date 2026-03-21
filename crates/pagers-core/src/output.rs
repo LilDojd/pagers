@@ -212,4 +212,39 @@ mod tests {
         assert_eq!(pretty_size(2 * 1024 * 1024 * 1024), "2.0G");
         assert_eq!(pretty_size(1024_i64.pow(4)), "1.0T");
     }
+
+    #[test]
+    fn test_pretty_size_negative() {
+        assert_eq!(pretty_size(-100), "-100");
+    }
+
+    #[test]
+    fn test_summary_from_stats_zero() {
+        let stats = Stats::new();
+        let summary = Summary::from_stats(&stats, 1.0, Mode::Query);
+        assert_eq!(summary.total_files, 0);
+        assert_eq!(summary.total_dirs, 0);
+        assert_eq!(summary.total_pages, 0);
+        assert_eq!(summary.pages_in_core, 0);
+        assert!((summary.pct - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_summary_pct_calculation() {
+        use std::sync::atomic::Ordering;
+        let stats = Stats::new();
+        stats.total_pages.store(200, Ordering::Relaxed);
+        stats.total_pages_in_core.store(100, Ordering::Relaxed);
+        let summary = Summary::from_stats(&stats, 0.5, Mode::Query);
+        assert!((summary.pct - 50.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_mode_display() {
+        assert_eq!(Mode::Query.to_string(), "query");
+        assert_eq!(Mode::Touch.to_string(), "touch");
+        assert_eq!(Mode::Evict.to_string(), "evict");
+        assert_eq!(Mode::Lock.to_string(), "lock");
+        assert_eq!(Mode::Lockall.to_string(), "lockall");
+    }
 }
