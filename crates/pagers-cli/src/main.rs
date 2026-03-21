@@ -5,6 +5,8 @@ use std::sync::atomic::AtomicBool;
 use pagers_core::ops;
 use pagers_core::output::{self, Mode, OutputFormat as CoreOutputFormat};
 
+use cli::OutputFormat;
+
 use clap::Parser;
 
 mod cli;
@@ -97,14 +99,9 @@ fn maybe_print_summary(stats: &ops::Stats, elapsed: f64, mode: Mode, common: &Co
     if std::io::stdout().is_terminal() {
         return;
     }
-    let format = resolve_output_format(&common.output);
+    let format = common.output.as_ref().map(|f| match f {
+        OutputFormat::Kv => CoreOutputFormat::Kv,
+        OutputFormat::Json => CoreOutputFormat::Json,
+    });
     output::print_summary(stats, elapsed, mode, format);
-}
-
-fn resolve_output_format(cli_format: &Option<OutputFormat>) -> CoreOutputFormat {
-    match cli_format {
-        Some(OutputFormat::Kv) => CoreOutputFormat::Kv,
-        Some(OutputFormat::Json) => CoreOutputFormat::Json,
-        None => CoreOutputFormat::Pretty,
-    }
 }

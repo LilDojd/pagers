@@ -28,11 +28,9 @@ impl fmt::Display for Mode {
     }
 }
 
-/// Output format for summary.
+/// Machine-readable output format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
-    Pretty,
-    Kv,
     Kv,
     Json,
 }
@@ -57,7 +55,6 @@ pub fn pretty_size(bytes: i64) -> String {
     }
 }
 
-/// Collect summary data from stats into a structured form.
 pub struct Summary {
     pub total_files: i64,
     pub total_dirs: i64,
@@ -99,11 +96,12 @@ impl Summary {
         }
     }
 
-    pub fn print(&self, format: OutputFormat) {
+    /// Print in the given format, or human-readable if `None`.
+    pub fn print(&self, format: Option<OutputFormat>) {
         match format {
-            OutputFormat::Kv => self.print_kv(),
-            OutputFormat::Json => self.print_json(),
-            OutputFormat::Pretty => self.print_pretty(),
+            Some(OutputFormat::Kv) => self.print_kv(),
+            Some(OutputFormat::Json) => self.print_json(),
+            None => self.print_human(),
         }
     }
 
@@ -136,7 +134,6 @@ impl Summary {
 
     fn print_json(&self) {
         let (_, desc) = self.desc();
-        // Manual JSON to avoid adding serde dependency
         println!(
             "{{\
             \"files\":{},\
@@ -159,7 +156,7 @@ impl Summary {
         );
     }
 
-    fn print_pretty(&self) {
+    fn print_human(&self) {
         println!("           Files: {}", self.total_files);
         println!("     Directories: {}", self.total_dirs);
         match self.mode {
@@ -193,8 +190,8 @@ impl Summary {
     }
 }
 
-/// Print summary in the given format. Convenience wrapper.
-pub fn print_summary(stats: &Stats, elapsed: f64, mode: Mode, format: OutputFormat) {
+/// Print summary. Pass `None` for human-readable, `Some(format)` for machine-readable.
+pub fn print_summary(stats: &Stats, elapsed: f64, mode: Mode, format: Option<OutputFormat>) {
     Summary::from_stats(stats, elapsed, mode).print(format);
 }
 
