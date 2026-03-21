@@ -12,7 +12,11 @@ pub(crate) trait Daemonize: RunOp
 where
     Self::Output: 'static,
 {
-    fn run_daemonized(&self, a: &WithCommon<LockInner>, term: &Arc<AtomicBool>) -> Result<(), Error> {
+    fn run_daemonized(
+        &self,
+        a: &WithCommon<LockInner>,
+        term: &Arc<AtomicBool>,
+    ) -> Result<(), Error> {
         match go_daemon(a.inner.wait)? {
             ForkOutcome::Parent => Ok(()),
             ForkOutcome::Child(notify_fd) => {
@@ -84,12 +88,7 @@ fn redirect_stdio() {
     }
 }
 
-fn hold(
-    stats: &ops::Stats,
-    inner: &LockInner,
-    term: &AtomicBool,
-    notify_fd: Option<OwnedFd>,
-) {
+fn hold(stats: &ops::Stats, inner: &LockInner, term: &AtomicBool, notify_fd: Option<OwnedFd>) {
     if let Some(p) = &inner.pidfile
         && let Err(e) = std::fs::write(p, format!("{}\n", std::process::id()))
     {

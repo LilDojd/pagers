@@ -10,12 +10,11 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc::Sender;
 
 use memmap2::{Mmap, MmapOptions};
 
 use crate::Error;
-use crate::events::Event;
+use crate::events::{Event, EventSink};
 use crate::mmap;
 
 pub use evict::Evict;
@@ -43,7 +42,7 @@ pub struct FileContext<'a> {
     pub mmap: Arc<Mmap>,
     pub offset: u64,
     pub len: usize,
-    pub events: Option<&'a Sender<Event>>,
+    pub events: Option<&'a EventSink>,
 }
 
 /// Byte range within a file to operate on.
@@ -93,11 +92,7 @@ fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
     Some((offset, len))
 }
 
-pub fn send_file_start(
-    path: &Path,
-    range: &FileRange,
-    tx: &Sender<Event>,
-) -> crate::Result<()> {
+pub fn send_file_start(path: &Path, range: &FileRange, sink: &EventSink) -> crate::Result<()> {
     let io_err = |e| Error::io(path.display().to_string(), e);
 
     let file = File::open(path).map_err(io_err)?;
@@ -116,7 +111,7 @@ pub fn send_file_start(
             .map_err(io_err)?
     };
     let residency = mmap::mincore_residency(&mmap, len)?;
-    let _ = tx.send(Event::FileStart {
+    sink.send(Event::FileStart {
         path: path.display().to_string(),
         total_pages: pages_in_range,
         residency,
@@ -137,7 +132,7 @@ pub fn process_file<O: Op>(
     path: &Path,
     range: &FileRange,
     stats: &Stats,
-    events: Option<&Sender<Event>>,
+    events: Option<&EventSink>,
     discovered: bool,
 ) -> crate::Result<Option<O::Output>> {
     let io_err = |e| Error::io(path.display().to_string(), e);
@@ -150,13 +145,12 @@ pub fn process_file<O: Op>(
         return Ok(None);
     }
 
-    let (offset, len) = effective_range(file_len, range).ok_or_else(|| {
-        Error::OffsetBeyondFile {
+    let (offset, len) =
+        effective_range(file_len, range).ok_or_else(|| Error::OffsetBeyondFile {
             path: path.to_path_buf(),
             offset: range.offset,
             file_len,
-        }
-    })?;
+        })?;
 
     let pages = len.div_ceil(mmap::page_size());
 
@@ -183,10 +177,10 @@ pub fn process_file<O: Op>(
         let residency = mmap::mincore_residency(&mmap, len)?;
         let count = residency.iter().filter(|r| **r).count() as i64;
 
-        if let Some(tx) = events
+        if let Some(sink) = events
             && !discovered
         {
-            let _ = tx.send(Event::FileStart {
+            sink.send(Event::FileStart {
                 path: path_str(),
                 total_pages: pages,
                 residency,
@@ -217,8 +211,8 @@ pub fn process_file<O: Op>(
         let residency = mmap::mincore_residency(&mmap, len)?;
         let count = residency.iter().filter(|r| **r).count() as i64;
 
-        if let Some(tx) = events {
-            let _ = tx.send(Event::FileDone {
+        if let Some(sink) = events {
+            sink.send(Event::FileDone {
                 path: path_str(),
                 pages_in_core: count as usize,
                 total_pages: pages,

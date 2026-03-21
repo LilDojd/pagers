@@ -38,12 +38,12 @@ impl Op for Touch {
                 std::ptr::read_volatile(mmap.as_ptr().add(offset));
             }
 
-            if let Some(tx) = ctx.events
+            if let Some(sink) = ctx.events
                 && page_idx > 0
                 && page_idx % PROGRESS_INTERVAL == 0
                 && let Ok(residency) = mmap::mincore_residency(mmap, len)
             {
-                let _ = tx.send(crate::events::Event::FileProgress {
+                sink.send(crate::events::Event::FileProgress {
                     path: ctx.path.display().to_string(),
                     residency,
                 });
@@ -51,10 +51,10 @@ impl Op for Touch {
         }
 
         // Final progress event with full residency
-        if let Some(tx) = ctx.events
+        if let Some(sink) = ctx.events
             && let Ok(residency) = mmap::mincore_residency(mmap, len)
         {
-            let _ = tx.send(crate::events::Event::FileProgress {
+            sink.send(crate::events::Event::FileProgress {
                 path: ctx.path.display().to_string(),
                 residency,
             });

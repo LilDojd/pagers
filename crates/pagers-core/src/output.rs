@@ -82,9 +82,6 @@ impl Summary {
     }
 }
 
-// ── Formatters ──────────────────────────────────────────────────────────────
-
-/// Capitalize the first character of a string.
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -131,10 +128,7 @@ fn print_human(s: &Summary, label: &str) {
     println!("     Directories: {}", s.total_dirs);
     match label {
         "resident" => {
-            print!(
-                "  Resident Pages: {}/{}  ",
-                s.pages_in_core, s.total_pages,
-            );
+            print!("  Resident Pages: {}/{}  ", s.pages_in_core, s.total_pages,);
             print!(
                 "{}/{}  ",
                 pretty_size(s.in_core_size),

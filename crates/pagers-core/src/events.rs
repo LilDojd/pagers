@@ -1,5 +1,8 @@
 //! Events emitted during file processing for UI consumption.
 
+use std::sync::Mutex;
+use std::sync::mpsc::Sender;
+
 /// Events sent from core processing to UI consumers.
 pub enum Event {
     /// A file has started processing. Includes initial residency snapshot.
@@ -17,4 +20,17 @@ pub enum Event {
         total_pages: usize,
         residency: Vec<bool>,
     },
+}
+
+/// `Sync` wrapper around `Sender<Event>` for use with rayon.
+pub struct EventSink(Mutex<Sender<Event>>);
+
+impl EventSink {
+    pub fn new(sender: Sender<Event>) -> Self {
+        Self(Mutex::new(sender))
+    }
+
+    pub fn send(&self, event: Event) {
+        let _ = self.0.lock().unwrap().send(event);
+    }
 }

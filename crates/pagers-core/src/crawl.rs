@@ -4,11 +4,11 @@ use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
-use std::collections::HashSet;
-
+use dashmap::DashMap;
 use ignore::WalkBuilder;
+use rayon::prelude::*;
 
-use crate::events::Event;
+use crate::events::{Event, EventSink};
 use crate::ops::{self, FileRange, Op, Stats};
 
 pub struct CrawlConfig {
@@ -22,42 +22,45 @@ pub struct CrawlConfig {
     pub nul_delim: bool,
 }
 
-/// Crawl paths and process files. Returns op outputs (non-empty files only).
 pub fn crawl_and_process<O: Op>(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
     op: &O,
     range: &FileRange,
     stats: &Stats,
-    events: Option<&Sender<Event>>,
+    events: Option<Sender<Event>>,
 ) -> crate::Result<Vec<O::Output>> {
-    let mut seen_inodes: HashSet<(u64, u64)> = HashSet::new();
-    let mut outputs = Vec::new();
+    let seen_inodes: DashMap<(u64, u64), ()> = DashMap::new();
+    let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
 
-    let file_paths = collect_file_paths(paths, crawl_config, &mut seen_inodes, stats);
+    let sink = events.map(EventSink::new);
+    let sink_ref = sink.as_ref();
 
     // Discovery phase: send FileStart for all files so the TUI sees them upfront.
-    let discovered = if let Some(tx) = events {
-        for path in &file_paths {
-            if let Err(e) = ops::send_file_start(path, range, tx) {
+    let discovered = if let Some(sink) = sink_ref {
+        file_paths.par_iter().for_each(|path| {
+            if let Err(e) = ops::send_file_start(path, range, sink) {
                 tracing::warn!("{}: {e}", path.display());
             }
-        }
+        });
         true
     } else {
         false
     };
 
-    // Processing phase: execute the operation on each file.
-    for path in &file_paths {
-        match ops::process_file(op, path, range, stats, events, discovered) {
-            Ok(Some(output)) => outputs.push(output),
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!("{e}");
-            }
-        }
-    }
+    let outputs: Vec<O::Output> = file_paths
+        .par_iter()
+        .filter_map(
+            |path| match ops::process_file(op, path, range, stats, sink_ref, discovered) {
+                Ok(Some(output)) => Some(output),
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    None
+                }
+            },
+        )
+        .collect();
 
     op.finish()?;
 
@@ -67,7 +70,7 @@ pub fn crawl_and_process<O: Op>(
 fn collect_file_paths(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
-    seen_inodes: &mut HashSet<(u64, u64)>,
+    seen_inodes: &DashMap<(u64, u64), ()>,
     stats: &Stats,
 ) -> Vec<PathBuf> {
     let mut all_paths: Vec<PathBuf> = paths.to_vec();
@@ -150,9 +153,12 @@ fn collect_file_paths(
                         use std::os::unix::fs::MetadataExt;
                         if let Some(ref m) = meta
                             && m.nlink() > 1
-                            && !seen_inodes.insert((m.dev(), m.ino()))
                         {
-                            continue;
+                            let key = (m.dev(), m.ino());
+                            if seen_inodes.contains_key(&key) {
+                                continue;
+                            }
+                            seen_inodes.insert(key, ());
                         }
                     }
                 }

@@ -37,9 +37,7 @@ where
 
         let range = ops::FileRange { offset, max_len };
 
-        let use_tui = tui
-            && !common.verbosity.is_silent()
-            && std::io::stdout().is_terminal();
+        let use_tui = tui && !common.verbosity.is_silent() && std::io::stdout().is_terminal();
         let (events_tx, events_rx) = if use_tui {
             let (tx, rx) = std::sync::mpsc::channel();
             (Some(tx), Some(rx))
@@ -66,9 +64,7 @@ where
             let stats_clone = Arc::clone(&stats);
             let tui_label = Self::LABEL.to_string();
             std::thread::spawn(move || {
-                if let Err(e) =
-                    pagers_tui::run(rx, term_clone, stats_clone, &tui_label, start)
-                {
+                if let Err(e) = pagers_tui::run(rx, term_clone, stats_clone, &tui_label, start) {
                     ::tracing::error!("TUI error: {e}");
                 }
             })
@@ -80,9 +76,8 @@ where
             self,
             &range,
             &stats,
-            events_tx.as_ref(),
+            events_tx,
         );
-        drop(events_tx);
 
         if let Some(handle) = tui_handle {
             handle.join().expect("TUI thread panicked");
