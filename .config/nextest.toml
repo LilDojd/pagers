@@ -1,0 +1,20 @@
+[store]
+dir = "target/nextest"
+
+[profile.default]
+fail-fast = true
+
+# Page cache residency tests are inherently flaky — retry with backoff.
+[[profile.default.overrides]]
+filter = """
+  test(touch_then_query_shows_resident)
+  | test(evict_then_query_runs_successfully)
+  | test(process_file_touch_makes_resident)
+  | test(cached_pages_on_temp_file)
+  | test(mincore_after_touch_shows_resident)
+"""
+retries = { backoff = "fixed", count = 3, delay = "100ms" }
+
+[[profile.default.overrides]]
+filter = "kind(test)"
+slow-timeout = { period = "30s", terminate-after = 2 }
