@@ -76,14 +76,14 @@ pub fn crawl_and_process<O: Op>(
                     );
 
                     if let Some(sink) = sink_ref {
-                        if let Some(residency) = result.residency_before {
-                            if !discovered {
-                                sink.send(Event::FileStart {
-                                    path: path.display().to_string(),
-                                    total_pages: result.total_pages,
-                                    residency,
-                                });
-                            }
+                        if let Some(residency) = result.residency_before
+                            && !discovered
+                        {
+                            sink.send(Event::FileStart {
+                                path: path.display().to_string(),
+                                total_pages: result.total_pages,
+                                residency,
+                            });
                         }
                         if let Some(residency) = result.residency_after {
                             sink.send(Event::FileDone {

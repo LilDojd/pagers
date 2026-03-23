@@ -16,6 +16,7 @@
           cargo-edit
           cargo-nextest
           cargo-machete
+          clippy
           cargo-autoinherit
           cargo-flamegraph
           mold
