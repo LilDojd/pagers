@@ -2,7 +2,13 @@
 {
   perSystem = { pkgs, lib, system, ... }:
     let
-      craneLib = inputs.crane.mkLib pkgs;
+      craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (
+        inputs.fenix.packages.${system}.fromToolchainFile {
+          file = self + /rust-toolchain.toml;
+          sha256 = "sha256-qqF33vNuAdU5vua96VKVIwuc43j4EFeEXbjQ6+l4mO4=";
+        }
+      );
+
       src = craneLib.cleanCargoSource self;
 
       commonArgs = {
@@ -10,7 +16,15 @@
         pname = "pagers";
         version = "0.1.0";
         strictDeps = true;
-        nativeBuildInputs = [ pkgs.clang pkgs.mold ];
+
+        nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [
+          pkgs.clang
+          pkgs.mold
+        ];
+
+        buildInputs = lib.optionals pkgs.stdenv.isDarwin [
+          pkgs.libiconv
+        ];
       };
 
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;

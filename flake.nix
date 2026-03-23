@@ -5,6 +5,10 @@
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
     systems.url = "github:nix-systems/default";
     crane.url = "github:ipetkov/crane";
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.flake = false;
     treefmt-nix.url = "github:numtide/treefmt-nix";

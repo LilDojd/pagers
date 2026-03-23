@@ -1,14 +1,34 @@
+{ inputs, self, ... }:
 {
   perSystem =
     { config
     , self'
     , pkgs
     , lib
+    , system
     , ...
     }:
+    let
+      craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (
+        inputs.fenix.packages.${system}.fromToolchainFile {
+          file = self + /rust-toolchain.toml;
+          sha256 = "sha256-qqF33vNuAdU5vua96VKVIwuc43j4EFeEXbjQ6+l4mO4=";
+        }
+      );
+
+      devShell =
+        if pkgs.stdenv.isLinux
+        then
+          craneLib.devShell.override
+            {
+              mkShell = pkgs.mkShell.override {
+                stdenv = pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv;
+              };
+            }
+        else craneLib.devShell;
+    in
     {
-      devShells.default = pkgs.mkShell {
-        name = "pagers-shell";
+      devShells.default = devShell {
         inputsFrom = [
           self'.packages.pagers
           config.pre-commit.devShell
@@ -27,9 +47,7 @@
             clippy
             cargo-autoinherit
             cargo-flamegraph
-            mold
             samply
-            clang
             git-cliff
           ]
           ++ lib.optionals pkgs.stdenv.isLinux [
