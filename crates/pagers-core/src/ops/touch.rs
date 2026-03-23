@@ -61,5 +61,5 @@ fn initiate_readahead(ctx: &FileContext) {
 
     let _ = ctx
         .mmap
-        .advise_range(Advice::WillNeed, ctx.offset as usize, ctx.len);
+        .advise_range(Advice::WillNeed, offset as usize, len as usize);
 }
