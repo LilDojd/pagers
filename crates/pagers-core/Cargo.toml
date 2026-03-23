@@ -11,7 +11,6 @@ libc = "0.2"
 memmap2 = "0.9"
 nix = { workspace = true, features = ["fs", "mman", "feature"] }
 rayon = "1"
-serde_json = "1.0.149"
 thiserror = "2"
 tracing = { workspace = true }
 

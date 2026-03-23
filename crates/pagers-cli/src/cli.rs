@@ -110,8 +110,8 @@ pub struct CommonArgs {
     pub nul_delim: bool,
 
     /// Output format
-    #[arg(short = 'o', long, value_enum)]
-    pub output: Option<OutputFormat>,
+    #[arg(short = 'o', long, value_enum, default_value_t)]
+    pub output: OutputFormat,
 }
 
 #[derive(clap::Args, Debug)]
@@ -129,12 +129,25 @@ pub struct LockInner {
     pub pidfile: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
+    /// Human-readable output
+    #[default]
+    Human,
     /// Key=value pairs
     Kv,
     /// JSON output
     Json,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Human => write!(f, "human"),
+            Self::Kv => write!(f, "kv"),
+            Self::Json => write!(f, "json"),
+        }
+    }
 }
 
 fn styles() -> clap::builder::Styles {

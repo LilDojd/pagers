@@ -1,26 +1,7 @@
-//! Summary output formatting.
-
 use std::sync::atomic::Ordering;
 
 use crate::mmap;
 use crate::ops::Stats;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OutputFormat {
-    Human,
-    Kv,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn print_summary(self, summary: &Summary, label: &str) {
-        match self {
-            Self::Human => print_human(summary, label),
-            Self::Kv => print_kv(summary, label),
-            Self::Json => print_json(summary, label),
-        }
-    }
-}
 
 pub fn pretty_size(bytes: i64) -> String {
     const KI: f64 = 1024.0;
@@ -82,74 +63,6 @@ impl Summary {
     }
 }
 
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}
-
-fn print_kv(s: &Summary, label: &str) {
-    let cap = capitalize(label);
-    println!(
-        "Files={} Directories={} \
-         {cap}Pages={} TotalPages={} \
-         {cap}Size={} TotalSize={} \
-         {cap}Percent={:.3} Elapsed={:.5}",
-        s.total_files,
-        s.total_dirs,
-        s.pages_in_core,
-        s.total_pages,
-        s.in_core_size,
-        s.total_size,
-        s.pct,
-        s.elapsed,
-    );
-}
-
-fn print_json(s: &Summary, label: &str) {
-    let value = serde_json::json!({
-        "files": s.total_files,
-        "directories": s.total_dirs,
-        format!("{label}_pages"): s.pages_in_core,
-        "total_pages": s.total_pages,
-        format!("{label}_size"): s.in_core_size,
-        "total_size": s.total_size,
-        format!("{label}_percent"): s.pct,
-        "elapsed": s.elapsed,
-    });
-    println!("{value}");
-}
-
-fn print_human(s: &Summary, label: &str) {
-    let cap = capitalize(label);
-    println!("           Files: {}", s.total_files);
-    println!("     Directories: {}", s.total_dirs);
-    match label {
-        "resident" => {
-            print!("  Resident Pages: {}/{}  ", s.pages_in_core, s.total_pages,);
-            print!(
-                "{}/{}  ",
-                pretty_size(s.in_core_size),
-                pretty_size(s.total_size)
-            );
-            if s.total_pages > 0 {
-                print!("{:.3}%", s.pct);
-            }
-            println!();
-        }
-        _ => {
-            println!(
-                "  {cap:>8} Pages: {} ({})",
-                s.total_pages,
-                pretty_size(s.total_size)
-            );
-        }
-    }
-    println!("         Elapsed: {:.5} seconds", s.elapsed);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,12 +101,5 @@ mod tests {
         stats.total_pages_in_core.store(100, Ordering::Relaxed);
         let summary = Summary::from_stats(&stats, 0.5);
         assert!((summary.pct - 50.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_capitalize() {
-        assert_eq!(capitalize("touched"), "Touched");
-        assert_eq!(capitalize("resident"), "Resident");
-        assert_eq!(capitalize(""), "");
     }
 }

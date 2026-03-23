@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use pagers_core::output::{OutputFormat as CoreOutputFormat, Summary};
+use pagers_core::output::Summary;
 use pagers_core::{crawl, mmap, ops};
 
 use crate::Error;
-use crate::cli::{CommonArgs, OutputFormat};
+use crate::cli::CommonArgs;
 
 pub(crate) trait Run {
     fn run(self) -> Result<(), Error>;
@@ -122,11 +122,6 @@ fn maybe_print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, common: &Co
     if std::io::stdout().is_terminal() {
         return;
     }
-    let format = match &common.output {
-        Some(OutputFormat::Kv) => CoreOutputFormat::Kv,
-        Some(OutputFormat::Json) => CoreOutputFormat::Json,
-        None => CoreOutputFormat::Human,
-    };
     let summary = Summary::from_stats(stats, elapsed);
-    format.print_summary(&summary, O::LABEL);
+    common.output.print_summary(&summary, O::LABEL);
 }

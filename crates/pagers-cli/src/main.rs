@@ -8,6 +8,7 @@ use clap::Parser;
 
 mod cli;
 mod daemon;
+mod output;
 mod runop;
 pub mod size_range;
 mod tracing;
