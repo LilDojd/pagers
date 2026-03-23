@@ -2,13 +2,15 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
+use pagers_core::mincore::PageMap;
+
 use crate::MAX_DISPLAY_PAGES;
 use crate::state::FileState;
 use crate::stats;
 
 /// Render file rows and stats summary into a buffer.
-pub(crate) fn render_viewport(
-    files: &[&FileState],
+pub(crate) fn render_viewport<PM: PageMap>(
+    files: &[&FileState<PM>],
     max_file_rows: u16,
     core_stats: &pagers_core::ops::Stats,
     elapsed: f64,
@@ -26,8 +28,8 @@ pub(crate) fn render_viewport(
     stats::render_summary(core_stats, elapsed, label, stats_area, buf);
 }
 
-pub(crate) fn render_refs_to_buf(
-    files: &[&FileState],
+pub(crate) fn render_refs_to_buf<PM: PageMap>(
+    files: &[&FileState<PM>],
     max_rows: u16,
     area: ratatui::layout::Rect,
     buf: &mut ratatui::buffer::Buffer,
@@ -43,8 +45,8 @@ pub(crate) fn render_refs_to_buf(
     }
 }
 
-pub(crate) fn render_file_row_to_buf(
-    file: &FileState,
+pub(crate) fn render_file_row_to_buf<PM: PageMap>(
+    file: &FileState<PM>,
     area: ratatui::layout::Rect,
     buf: &mut ratatui::buffer::Buffer,
 ) {

@@ -5,22 +5,20 @@ use std::thread;
 use std::time::Duration;
 
 use pagers_core::events::Event as CoreEvent;
+use pagers_core::mincore::DefaultPageMap;
 
 /// Internal event type combining core events with TUI-specific events.
-pub(crate) enum TuiEvent {
-    Core(CoreEvent),
+pub(crate) enum TuiEvent<PM = DefaultPageMap> {
+    Core(CoreEvent<PM>),
     Quit,
 }
 
-/// Spawns signal-watcher and core-forwarder threads.
-/// Returns a receiver for all TUI events.
-pub(crate) fn spawn_event_threads(
-    core_rx: mpsc::Receiver<CoreEvent>,
+pub(crate) fn spawn_event_threads<PM: Send + 'static>(
+    core_rx: mpsc::Receiver<CoreEvent<PM>>,
     term: Arc<AtomicBool>,
-) -> mpsc::Receiver<TuiEvent> {
-    let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent>();
+) -> mpsc::Receiver<TuiEvent<PM>> {
+    let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent<PM>>();
 
-    // Polls the termination flag set by signal-hook in the CLI crate.
     let signal_term = Arc::clone(&term);
     let signal_tx = tui_tx.clone();
     thread::spawn(move || {
@@ -30,7 +28,6 @@ pub(crate) fn spawn_event_threads(
         let _ = signal_tx.send(TuiEvent::Quit);
     });
 
-    // Raw mode swallows SIGINT, so poll for Ctrl+C as a keypress.
     let key_term = Arc::clone(&term);
     let key_tx = tui_tx.clone();
     thread::spawn(move || {

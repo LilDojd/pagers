@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use pagers_core::events::Event as CoreEvent;
+use pagers_core::mincore::{DefaultPageMap, PageMap, PageMapSlice as _};
 
 use crate::event::TuiEvent;
 use crate::state::FileState;
 
-#[derive(Default)]
-pub struct App {
-    files: Vec<FileState>,
+pub struct App<PM: PageMap = DefaultPageMap> {
+    files: Vec<FileState<PM>>,
     file_index: HashMap<String, usize>,
 }
 
@@ -17,19 +17,28 @@ pub enum ControlFlow {
     Done,
 }
 
-impl App {
+impl<PM: PageMap> Default for App<PM> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<PM: PageMap> App<PM> {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            files: Vec::new(),
+            file_index: HashMap::new(),
+        }
     }
 
-    pub(crate) fn handle_event(&mut self, event: TuiEvent) -> ControlFlow {
+    pub(crate) fn handle_event(&mut self, event: TuiEvent<PM>) -> ControlFlow {
         match event {
             TuiEvent::Core(CoreEvent::FileStart {
                 path,
                 total_pages,
                 residency,
             }) => {
-                let pages_in_core = residency.count_ones();
+                let pages_in_core = residency.count_filled();
                 let idx = self.files.len();
                 self.file_index.insert(path.clone(), idx);
                 self.files.push(FileState {
@@ -70,14 +79,14 @@ impl App {
         }
     }
 
-    pub fn files(&self) -> Vec<&FileState> {
+    pub fn files(&self) -> Vec<&FileState<PM>> {
         self.files.iter().collect()
     }
 
     /// Return files for the live TUI viewport: sorted by size descending
     /// (path tiebreaker), with done files hidden when total exceeds `max`.
-    pub fn visible_files(&self, max: usize) -> Vec<&FileState> {
-        let mut files: Vec<&FileState> = self.files.iter().collect();
+    pub fn visible_files(&self, max: usize) -> Vec<&FileState<PM>> {
+        let mut files: Vec<&FileState<PM>> = self.files.iter().collect();
         files.sort_by(|a, b| {
             b.total_pages
                 .cmp(&a.total_pages)
@@ -90,7 +99,7 @@ impl App {
         files
     }
 
-    pub fn into_files(self) -> Vec<FileState> {
+    pub fn into_files(self) -> Vec<FileState<PM>> {
         let mut files = self.files;
         files.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
         files
@@ -242,14 +251,14 @@ mod tests {
 
     #[test]
     fn test_all_done_returns_done() {
-        let mut app = App::new();
+        let mut app: App<Vec<bool>> = App::new();
         let flow = app.handle_event(TuiEvent::Core(CoreEvent::AllDone));
         assert!(matches!(flow, ControlFlow::Done));
     }
 
     #[test]
     fn test_quit_returns_quit() {
-        let mut app = App::new();
+        let mut app: App<Vec<bool>> = App::new();
         let flow = app.handle_event(TuiEvent::Quit);
         assert!(matches!(flow, ControlFlow::Quit));
     }

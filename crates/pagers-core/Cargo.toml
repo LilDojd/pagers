@@ -4,11 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-serde = ["dep:serde", "bitvec/serde"]
+default = ["bitvec"]
+bitvec = ["dep:bitvec"]
+serde = ["dep:serde", "bitvec?/serde"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
-bitvec = { workspace = true }
+bitvec = { workspace = true, optional = true }
 dashmap = "6"
 lazy_static = "1"
 ignore = "0.4"

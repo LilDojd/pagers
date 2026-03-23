@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
+use pagers_core::mincore::{DefaultPageMap, PageMap};
 use pagers_core::output::Summary;
 use pagers_core::{crawl, ops};
 
@@ -13,27 +14,33 @@ pub(crate) trait Run {
     fn run(self) -> Result<(), Error>;
 }
 
-pub(crate) struct SimpleCmd<'a, O> {
+pub(crate) struct SimpleCmd<'a, O, PM: PageMap = DefaultPageMap> {
     op: O,
     common: &'a CommonArgs,
     term: &'a Arc<AtomicBool>,
+    _phantom: std::marker::PhantomData<PM>,
 }
 
-impl<'a, O: ops::Op + Send + 'static> SimpleCmd<'a, O>
+impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> SimpleCmd<'a, O, PM>
 where
     O::Output: 'static,
 {
     pub fn new(op: O, common: &'a CommonArgs, term: &'a Arc<AtomicBool>) -> Self {
-        Self { op, common, term }
+        Self {
+            op,
+            common,
+            term,
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<O: ops::Op + Send + 'static> Run for SimpleCmd<'_, O>
+impl<O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> Run for SimpleCmd<'_, O, PM>
 where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        let (stats, _, elapsed) = run_op(&self.op, self.common, true, self.term)?;
+        let (stats, _, elapsed) = run_op::<O, PM>(&self.op, self.common, true, self.term)?;
         maybe_print_summary::<O>(&stats, elapsed, self.common);
         Ok(())
     }
@@ -41,7 +48,7 @@ where
 
 pub(crate) type RunResult<O> = Result<(Arc<ops::Stats>, Vec<O>, f64), Error>;
 
-pub(crate) fn run_op<O: ops::Op + Send + 'static>(
+pub(crate) fn run_op<O: ops::Op + Send + 'static, PM: PageMap + Send + 'static>(
     op: &O,
     common: &CommonArgs,
     tui: bool,
@@ -67,7 +74,7 @@ where
 
     let use_tui = tui && !common.verbosity.is_silent() && std::io::stdout().is_terminal();
     let (events_tx, events_rx) = if use_tui {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel::<pagers_core::events::Event<PM>>();
         (Some(tx), Some(rx))
     } else {
         (None, None)

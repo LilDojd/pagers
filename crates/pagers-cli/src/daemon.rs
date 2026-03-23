@@ -2,28 +2,35 @@ use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use pagers_core::mincore::{DefaultPageMap, PageMap};
 use pagers_core::{ops, output};
 
 use crate::Error;
 use crate::cli::{LockInner, WithCommon};
 use crate::runop::{Run, run_op};
 
-pub(crate) struct DaemonCmd<'a, O> {
+pub(crate) struct DaemonCmd<'a, O, PM: PageMap = DefaultPageMap> {
     op: O,
     args: &'a WithCommon<LockInner>,
     term: &'a Arc<AtomicBool>,
+    _phantom: std::marker::PhantomData<PM>,
 }
 
-impl<'a, O: ops::Op + Send + 'static> DaemonCmd<'a, O>
+impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> DaemonCmd<'a, O, PM>
 where
     O::Output: 'static,
 {
     pub fn new(op: O, args: &'a WithCommon<LockInner>, term: &'a Arc<AtomicBool>) -> Self {
-        Self { op, args, term }
+        Self {
+            op,
+            args,
+            term,
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<O: ops::Op + Send + 'static> Run for DaemonCmd<'_, O>
+impl<O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> Run for DaemonCmd<'_, O, PM>
 where
     O::Output: 'static,
 {
@@ -32,13 +39,14 @@ where
             match go_daemon(self.args.inner.wait)? {
                 ForkOutcome::Parent => Ok(()),
                 ForkOutcome::Child(notify_fd) => {
-                    let (stats, _, _) = run_op(&self.op, self.args.common(), false, self.term)?;
+                    let (stats, _, _) =
+                        run_op::<O, PM>(&self.op, self.args.common(), false, self.term)?;
                     hold(&stats, &self.args.inner, self.term, notify_fd);
                     Ok(())
                 }
             }
         } else {
-            run_op(&self.op, self.args.common(), false, self.term)?;
+            run_op::<O, PM>(&self.op, self.args.common(), false, self.term)?;
             Ok(())
         }
     }

@@ -8,6 +8,7 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 
 use crate::events::{Event, EventSink};
+use crate::mincore::PageMap;
 use crate::ops::{self, FileRange, Op, Stats};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,13 +24,13 @@ pub struct CrawlConfig {
     pub nul_delim: bool,
 }
 
-pub fn crawl_and_process<O: Op>(
+pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
     op: &O,
     range: &FileRange,
     stats: &Stats,
-    events: Option<Sender<Event>>,
+    events: Option<Sender<Event<PM>>>,
 ) -> crate::Result<Vec<O::Output>> {
     let seen_inodes: DashMap<(u64, u64), ()> = DashMap::new();
     let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
@@ -40,7 +41,7 @@ pub fn crawl_and_process<O: Op>(
     let discovered = if let Some(sink) = sink_ref {
         file_paths
             .par_iter()
-            .for_each(|path| match ops::file_info(path, range) {
+            .for_each(|path| match ops::file_info::<PM>(path, range) {
                 Ok(Some(info)) => {
                     sink.send(Event::FileStart {
                         path: path.display().to_string(),
@@ -61,7 +62,7 @@ pub fn crawl_and_process<O: Op>(
     let outputs: Vec<O::Output> = file_paths
         .par_iter()
         .filter_map(|path| {
-            match ops::process_file(op, path, range, with_residency && !discovered) {
+            match ops::process_file::<O, PM>(op, path, range, with_residency && !discovered) {
                 Ok(Some(result)) => {
                     stats
                         .total_pages

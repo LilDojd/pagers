@@ -1,14 +1,14 @@
-use bitvec::prelude::*;
+use pagers_core::mincore::{DefaultPageMap, PageMap, PageMapSlice as _};
 
-pub struct FileState {
+pub struct FileState<PM: PageMap = DefaultPageMap> {
     pub path: String,
     pub total_pages: usize,
     pub pages_in_core: usize,
-    pub residency: BitVec,
+    pub residency: PM,
     pub done: bool,
 }
 
-impl FileState {
+impl<PM: PageMap> FileState<PM> {
     pub fn ratio(&self) -> f64 {
         if self.total_pages == 0 {
             return 0.0;
@@ -31,7 +31,7 @@ impl FileState {
                 let end = (i + 1) * n / w;
                 let slice = &self.residency[start..end];
 
-                (slice.count_ones(), slice.len())
+                (slice.count_filled(), slice.len())
             })
             .collect()
     }

@@ -10,8 +10,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 
-use bitvec::vec::BitVec;
 use memmap2::Mmap;
+
+use crate::mincore::DefaultPageMap;
 
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
@@ -49,20 +50,20 @@ pub struct FileRange {
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct FileInfo {
+pub struct FileInfo<PM = DefaultPageMap> {
     pub total_pages: usize,
-    pub residency: BitVec,
+    pub residency: PM,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct FileResult<O> {
+pub struct FileResult<O, PM = DefaultPageMap> {
     pub output: O,
     pub total_pages: usize,
     pub pages_in_core_before: i64,
     pub pages_in_core_after: i64,
-    pub residency_before: Option<BitVec>,
-    pub residency_after: Option<BitVec>,
+    pub residency_before: Option<PM>,
+    pub residency_after: Option<PM>,
 }
 
 #[derive(Debug)]

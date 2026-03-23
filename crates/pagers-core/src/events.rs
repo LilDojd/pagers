@@ -3,16 +3,16 @@
 use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 
-use bitvec::prelude::*;
+use crate::mincore::DefaultPageMap;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Event {
+pub enum Event<PM = DefaultPageMap> {
     /// A file has started processing. Includes initial residency snapshot.
     FileStart {
         path: String,
         total_pages: usize,
-        residency: BitVec,
+        residency: PM,
     },
     /// Residency update during touch/lock polling.
     FileProgress {
@@ -24,20 +24,20 @@ pub enum Event {
         path: String,
         pages_in_core: usize,
         total_pages: usize,
-        residency: BitVec,
+        residency: PM,
     },
     AllDone,
 }
 
 /// `Sync` wrapper around `Sender<Event>` for use with rayon.
-pub struct EventSink(Mutex<Sender<Event>>);
+pub struct EventSink<PM>(Mutex<Sender<Event<PM>>>);
 
-impl EventSink {
-    pub fn new(sender: Sender<Event>) -> Self {
+impl<PM> EventSink<PM> {
+    pub fn new(sender: Sender<Event<PM>>) -> Self {
         Self(Mutex::new(sender))
     }
 
-    pub fn send(&self, event: Event) {
+    pub fn send(&self, event: Event<PM>) {
         let _ = self.0.lock().unwrap().send(event);
     }
 }

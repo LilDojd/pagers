@@ -14,8 +14,12 @@ pub mod size_range;
 mod tracing;
 use cli::*;
 use daemon::DaemonCmd;
+use pagers_core::mincore::DefaultPageMap;
 use runop::{Run, SimpleCmd};
 use size_range::{SizeRange, parse_size};
+
+type Cmd<'a, O> = SimpleCmd<'a, O, DefaultPageMap>;
+type Daemon<'a, O> = DaemonCmd<'a, O, DefaultPageMap>;
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum Error {
@@ -54,10 +58,10 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
     match cli.command {
-        Command::Query(a) => SimpleCmd::new(ops::Query, a.common(), term).run(),
-        Command::Touch(a) => SimpleCmd::new(ops::Touch, a.common(), term).run(),
-        Command::Evict(a) => SimpleCmd::new(ops::Evict, a.common(), term).run(),
-        Command::Lock(a) => DaemonCmd::new(ops::Lock, &a, term).run(),
-        Command::Lockall(a) => DaemonCmd::new(ops::Lockall, &a, term).run(),
+        Command::Query(a) => Cmd::new(ops::Query, a.common(), term).run(),
+        Command::Touch(a) => Cmd::new(ops::Touch, a.common(), term).run(),
+        Command::Evict(a) => Cmd::new(ops::Evict, a.common(), term).run(),
+        Command::Lock(a) => Daemon::new(ops::Lock, &a, term).run(),
+        Command::Lockall(a) => Daemon::new(ops::Lockall, &a, term).run(),
     }
 }

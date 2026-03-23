@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use color_eyre::Result;
 use pagers_core::events::Event as CoreEvent;
+use pagers_core::mincore::PageMap;
 use pagers_core::ops::Stats;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -23,8 +24,8 @@ use ratatui::{TerminalOptions, Viewport};
 const MAX_DISPLAY_FILES: u16 = 8;
 const MAX_DISPLAY_PAGES: usize = 32;
 
-pub fn run(
-    rx: mpsc::Receiver<CoreEvent>,
+pub fn run<PM: PageMap + Send + 'static>(
+    rx: mpsc::Receiver<CoreEvent<PM>>,
     term: Arc<AtomicBool>,
     core_stats: Arc<Stats>,
     label: &str,
