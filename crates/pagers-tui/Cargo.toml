@@ -3,10 +3,14 @@ name = "pagers-tui"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["bitvec"]
+bitvec = ["pagers-core/bitvec"]
+
 [dependencies]
 color-eyre = "0.6"
 crossterm = "0.29"
-pagers-core = { workspace = true }
+pagers-core = { workspace = true, default-features = false }
 ratatui = "0.30"
 
 [dev-dependencies]

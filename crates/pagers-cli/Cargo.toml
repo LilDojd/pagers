@@ -7,6 +7,10 @@ edition = "2024"
 name = "pagers"
 path = "src/main.rs"
 
+[features]
+default = ["bitvec"]
+bitvec = ["pagers-core/bitvec", "pagers-tui/bitvec"]
+
 [dependencies]
 anstyle = "1.0.14"
 clap = { version = "4", features = [
@@ -19,8 +23,8 @@ clap = { version = "4", features = [
 clap-verbosity-flag = { version = "3.0.4", default-features = false, features = [
   "tracing",
 ] }
-pagers-core = { workspace = true }
-pagers-tui = { path = "../pagers-tui" }
+pagers-core = { workspace = true, default-features = false }
+pagers-tui = { path = "../pagers-tui", default-features = false }
 serde_json = "1"
 nix = { workspace = true, features = ["fs", "process"] }
 signal-hook = "0.4"

@@ -22,4 +22,9 @@ thiserror = "2"
 tracing = { workspace = true }
 
 [dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "residency"
+harness = false

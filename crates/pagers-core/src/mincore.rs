@@ -29,7 +29,7 @@ pub fn residency<PM: PageMap>(mmap: &Mmap, len: usize) -> nix::Result<PM> {
         // SAFETY: we just filled up the vector with valid values
         vec_out.set_len(vec_len);
     }
-    Ok(PM::from_bools(vec_out.into_iter().map(|x| x != 0)))
+    Ok(PM::from_residency_bytes(vec_out))
 }
 
 pub trait PageMapSlice {
@@ -47,6 +47,13 @@ pub trait PageMap:
     type Slice: ?Sized + PageMapSlice;
 
     fn from_bools(iter: impl Iterator<Item = bool>) -> Self;
+
+    fn from_residency_bytes(bytes: Vec<u8>) -> Self
+    where
+        Self: Sized,
+    {
+        Self::from_bools(bytes.into_iter().map(|b| b != 0))
+    }
 }
 
 #[cfg(feature = "bitvec")]
@@ -133,6 +140,23 @@ mod bitvec_impl {
 
         fn from_bools(iter: impl Iterator<Item = bool>) -> Self {
             iter.collect()
+        }
+
+        fn from_residency_bytes(bytes: Vec<u8>) -> Self {
+            let len = bytes.len();
+            let bits_per_word = usize::BITS as usize;
+            let packed: Vec<usize> = bytes
+                .chunks(bits_per_word)
+                .map(|chunk| {
+                    chunk
+                        .iter()
+                        .enumerate()
+                        .fold(0usize, |acc, (i, &b)| acc | (((b != 0) as usize) << i))
+                })
+                .collect();
+            let mut bv = BitVec::from_vec(packed);
+            bv.truncate(len);
+            bv
         }
     }
 }
