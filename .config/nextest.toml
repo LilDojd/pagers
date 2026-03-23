@@ -18,3 +18,9 @@ retries = { backoff = "fixed", count = 3, delay = "100ms" }
 [[profile.default.overrides]]
 filter = "kind(test)"
 slow-timeout = { period = "30s", terminate-after = 2 }
+
+[profile.ci]
+fail-fast = true
+
+[profile.ci.junit]
+path = "junit.xml"

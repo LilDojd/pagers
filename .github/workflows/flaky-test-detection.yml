@@ -1,0 +1,44 @@
+name: Flaky Test Detection
+
+on:
+  schedule:
+    - cron: "0 */12 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  flaky-detection-test:
+    name: Tests - Flaky Detection (Run ${{ matrix.run_number }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        run_number: [1, 2, 3, 4, 5]
+    env:
+      MERGIFY_JOB_NAME: test (ubuntu-latest)
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run tests
+        run: |
+          cargo nextest run --locked --workspace --profile ci || true
+          cp target/nextest/ci/junit.xml junit-test-${{ matrix.run_number }}.xml
+
+      - name: Upload test results to Mergify
+        if: success() || failure()
+        uses: mergifyio/gha-mergify-ci@v14
+        with:
+          token: ${{ secrets.MERGIFY_TOKEN }}
+          flaky_test_detection: true
+          report_path: "junit-test-*.xml"

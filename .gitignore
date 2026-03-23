@@ -4,3 +4,4 @@
 .devenv*
 devenv.lock
 result
+/.helix

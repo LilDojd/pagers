@@ -49,6 +49,7 @@
             cargo-flamegraph
             samply
             git-cliff
+            typos
           ]
           ++ lib.optionals pkgs.stdenv.isLinux [
             perf
