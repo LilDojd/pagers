@@ -23,21 +23,23 @@ fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
     Some((offset, len))
 }
 
+#[allow(unused_variables)]
 fn page_count<PM: PageMap>(
     file: &File,
     mmap: &memmap2::Mmap,
     offset: u64,
     len: usize,
 ) -> crate::Result<(i64, Option<PM>)> {
+    #[cfg(target_os = "linux")]
     if *crate::cachestat::SUPPORTED {
         use std::os::unix::io::AsFd;
         let count = crate::cachestat::cached_pages(file.as_fd(), offset, len as u64)? as i64;
-        Ok((count, None))
-    } else {
-        let residency: PM = crate::mincore::residency(mmap, len)?;
-        let count = residency.count_filled() as i64;
-        Ok((count, Some(residency)))
+        return Ok((count, None));
     }
+
+    let residency: PM = crate::mincore::residency(mmap, len)?;
+    let count = residency.count_filled() as i64;
+    Ok((count, Some(residency)))
 }
 
 fn page_count_with_residency<PM: PageMap>(
