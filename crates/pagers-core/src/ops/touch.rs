@@ -1,10 +1,6 @@
 use super::{FileContext, Op};
 use crate::mmap;
 
-/// 2 MiB per fadvise call stays under Linux's `max_sane_readahead()` cap.
-const FADVISE_STEP: usize = 2 * 1024 * 1024;
-
-/// Readahead via fadvise, then walk every page with read_volatile.
 pub struct Touch;
 
 impl Op for Touch {
@@ -22,67 +18,53 @@ impl Op for Touch {
         let page_size = mmap::page_size();
         let total_pages = len.div_ceil(page_size);
 
-        // Phase 1: kick off async readahead
-        initiate_readahead(ctx);
+        std::thread::scope(|s| {
+            s.spawn(|| initiate_readahead(ctx));
 
-        // Phase 2: walk every page to guarantee residency
-        for page_idx in 0..total_pages {
-            let offset = page_idx * page_size;
-            // SAFETY: offset < len, within the mmap region.
-            unsafe {
-                std::ptr::read_volatile(mmap.as_ptr().add(offset));
-            }
+            for page_idx in 0..total_pages {
+                let offset = page_idx * page_size;
+                // SAFETY: offset < len, within the mmap region.
+                unsafe {
+                    std::ptr::read_volatile(mmap.as_ptr().add(offset));
+                }
 
-            if let Some(sink) = ctx.events
-                && page_idx > 0
-                && page_idx % 4096 == 0
-            {
-                sink.send(crate::events::Event::FileProgress {
-                    path: ctx.path.display().to_string(),
-                    pages_walked: page_idx,
-                });
+                if let Some(sink) = ctx.events
+                    && page_idx > 0
+                    && page_idx % 4096 == 0
+                {
+                    sink.send(crate::events::Event::FileProgress {
+                        path: ctx.path.display().to_string(),
+                        pages_walked: page_idx,
+                    });
+                }
             }
-        }
+        });
 
         Ok(())
     }
 }
 
 fn initiate_readahead(ctx: &FileContext) {
-    let len = ctx.len;
+    let offset = ctx.offset as i64;
+    let len = ctx.len as i64;
 
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsFd;
         let fd = ctx.file.as_fd();
-        let offset = ctx.offset as i64;
-        let len_i64 = len as i64;
-
         let _ = nix::fcntl::posix_fadvise(
             fd,
             offset,
-            len_i64,
+            len,
             nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,
         );
-        for off in (0..len).step_by(FADVISE_STEP) {
-            let chunk = (len - off).min(FADVISE_STEP) as i64;
-            let _ = nix::fcntl::posix_fadvise(
-                fd,
-                offset + off as i64,
-                chunk,
-                nix::fcntl::PosixFadviseAdvice::POSIX_FADV_WILLNEED,
-            );
-        }
+        let _ = nix::fcntl::posix_fadvise(
+            fd,
+            offset,
+            len,
+            nix::fcntl::PosixFadviseAdvice::POSIX_FADV_WILLNEED,
+        );
     }
 
-    #[cfg(not(target_os = "linux"))]
-    {
-        let step = FADVISE_STEP;
-        for off in (0..len).step_by(step) {
-            let chunk = (len - off).min(step);
-            if let Err(e) = mmap::advise_willneed(&ctx.mmap, off, chunk) {
-                tracing::warn!("madvise failed at offset {off}: {e}");
-            }
-        }
-    }
+    let _ = mmap::advise_willneed(&ctx.mmap, ctx.offset as usize, ctx.len);
 }

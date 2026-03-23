@@ -14,7 +14,10 @@ pub enum Event {
         residency: BitVec,
     },
     /// Residency update during touch/lock polling.
-    FileProgress { path: String, pages_walked: usize },
+    FileProgress {
+        path: String,
+        pages_walked: usize,
+    },
     /// File processing complete.
     FileDone {
         path: String,

@@ -63,13 +63,15 @@ pub(crate) fn render_summary(
         ("Files:".into(), Line::from(format!("{total_files}"))),
         ("Directories:".into(), Line::from(format!("{total_dirs}"))),
         (pages_label, pages_value),
-        ("Elapsed:".into(), Line::from(format!("{elapsed:.5} seconds"))),
+        (
+            "Elapsed:".into(),
+            Line::from(format!("{elapsed:.5} seconds")),
+        ),
     ];
 
     let row_areas = vertical![==1, ==1, ==1, ==1].split(area);
     for (i, (label_text, value_line)) in rows.into_iter().enumerate() {
-        let [label_area, _, value_area] =
-            horizontal![==LABEL_WIDTH, ==1, *=1].areas(row_areas[i]);
+        let [label_area, _, value_area] = horizontal![==LABEL_WIDTH, ==1, *=1].areas(row_areas[i]);
 
         Line::from(Span::styled(label_text, label_style))
             .alignment(Alignment::Right)

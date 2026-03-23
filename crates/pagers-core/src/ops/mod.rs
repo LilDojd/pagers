@@ -318,14 +318,9 @@ mod tests {
         process_file(&Touch, f.path(), &range, &stats2, None, false).unwrap();
 
         let file = File::open(f.path()).unwrap();
-        let mmap_check = unsafe {
-            memmap2::MmapOptions::new().len(size).map(&file).unwrap()
-        };
+        let mmap_check = unsafe { memmap2::MmapOptions::new().len(size).map(&file).unwrap() };
         let residency = mmap::mincore_residency(&mmap_check, size).unwrap();
-        assert!(
-            residency.all(),
-            "expected all pages resident after touch"
-        );
+        assert!(residency.all(), "expected all pages resident after touch");
     }
 
     #[test]
@@ -356,7 +351,11 @@ mod tests {
         drop(sink);
 
         let events: Vec<_> = rx.iter().collect();
-        assert!(events.len() >= 2, "expected at least 2 events, got {}", events.len());
+        assert!(
+            events.len() >= 2,
+            "expected at least 2 events, got {}",
+            events.len()
+        );
         assert!(matches!(&events[0], crate::events::Event::FileStart { .. }));
         assert!(matches!(
             events.last().unwrap(),
