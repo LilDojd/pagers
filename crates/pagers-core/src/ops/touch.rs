@@ -32,10 +32,10 @@ impl Op for Touch {
                 unsafe {
                     std::ptr::read_volatile(mmap.as_ptr().add(offset));
                 }
-                if let Some(on_progress) = &ctx.on_progress {
-                    if (page_idx + 1) % PROGRESS_INTERVAL == 0 {
-                        on_progress(page_idx + 1);
-                    }
+                if let Some(on_progress) = &ctx.on_progress
+                    && (page_idx + 1) % PROGRESS_INTERVAL == 0
+                {
+                    on_progress(page_idx + 1);
                 }
             }
         });
