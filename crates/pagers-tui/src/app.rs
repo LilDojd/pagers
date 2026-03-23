@@ -50,13 +50,18 @@ impl<PM: PageMap> App<PM> {
                 });
                 ControlFlow::Continue
             }
-            TuiEvent::Core(CoreEvent::FileProgress { path, pages_walked }) => {
+            TuiEvent::Core(CoreEvent::FileProgress {
+                path,
+                page_offset,
+                pages_walked,
+            }) => {
                 if let Some(&idx) = self.file_index.get(&path) {
                     let file = &mut self.files[idx];
-                    let end = pages_walked.min(file.residency.len());
-                    if file.pages_in_core < end {
-                        file.residency[file.pages_in_core..end].fill(true);
-                        file.pages_in_core = end;
+                    let start = page_offset;
+                    let end = (page_offset + pages_walked).min(file.residency.len());
+                    if start < end {
+                        file.residency[start..end].fill(true);
+                        file.pages_in_core = file.residency.count_filled();
                     }
                 }
                 ControlFlow::Continue
@@ -134,6 +139,7 @@ mod tests {
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileProgress {
             path: "/a.bin".to_string(),
+            page_offset: 0,
             pages_walked: 100,
         }));
         assert_eq!(app.files()[0].pages_in_core, 100);

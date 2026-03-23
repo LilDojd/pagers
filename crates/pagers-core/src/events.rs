@@ -17,6 +17,7 @@ pub enum Event<PM = DefaultPageMap> {
     /// Residency update during touch/lock polling.
     FileProgress {
         path: String,
+        page_offset: usize,
         pages_walked: usize,
     },
     /// File processing complete.

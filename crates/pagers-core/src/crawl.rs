@@ -45,7 +45,11 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
             let path_str = path.display().to_string();
 
             if let Some(sink) = sink_ref {
-                match ops::file_info::<PM>(path, range) {
+                let full_file = FileRange {
+                    offset: 0,
+                    max_len: None,
+                };
+                match ops::file_info::<PM>(path, &full_file) {
                     Ok(Some(info)) => sink.send(Event::FileStart {
                         path: path_str.clone(),
                         total_pages: info.total_pages,
@@ -59,11 +63,13 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
                 }
             }
 
+            let page_offset = range.offset as usize / *crate::pagesize::PAGE_SIZE;
             let on_progress;
             let on_progress_ref = if let Some(sink) = sink_ref {
-                on_progress = |pages_walked: usize| {
+                on_progress = move |pages_walked: usize| {
                     sink.send(Event::FileProgress {
                         path: path_str.clone(),
+                        page_offset,
                         pages_walked,
                     });
                 };
@@ -96,12 +102,16 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
                 .fetch_add(result.pages_in_core_after, Ordering::Relaxed);
 
             if let Some(sink) = sink_ref {
-                if let Some(residency) = result.residency_after {
+                let full_file = FileRange {
+                    offset: 0,
+                    max_len: None,
+                };
+                if let Ok(Some(info)) = ops::file_info::<PM>(path, &full_file) {
                     sink.send(Event::FileDone {
                         path: path.display().to_string(),
-                        pages_in_core: result.pages_in_core_after as usize,
-                        total_pages: result.total_pages,
-                        residency,
+                        pages_in_core: info.residency.count_filled(),
+                        total_pages: info.total_pages,
+                        residency: info.residency,
                     });
                 }
             }
