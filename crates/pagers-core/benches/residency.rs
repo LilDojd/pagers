@@ -100,5 +100,11 @@ fn bench_from_residency_bytes(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_residency, bench_count_filled, bench_from_bools, bench_from_residency_bytes);
+criterion_group!(
+    benches,
+    bench_residency,
+    bench_count_filled,
+    bench_from_bools,
+    bench_from_residency_bytes
+);
 criterion_main!(benches);

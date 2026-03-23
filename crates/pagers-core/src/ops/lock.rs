@@ -4,7 +4,7 @@ use memmap2::Mmap;
 
 use super::touch::Touch;
 use super::{FileContext, Op};
-use crate::mmap;
+use crate::mlock;
 
 /// Touch pages into cache, then lock them in physical memory with mlock(2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,7 @@ impl Op for Lock {
 
     fn execute(&self, ctx: &FileContext) -> crate::Result<LockedFile> {
         Touch.execute(ctx)?;
-        mmap::mlock(&ctx.mmap, ctx.len)?;
+        mlock::mlock(&ctx.mmap, ctx.len)?;
         Ok(LockedFile {
             _mmap: Arc::clone(&ctx.mmap),
         })

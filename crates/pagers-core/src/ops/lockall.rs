@@ -1,6 +1,6 @@
 use super::lock::{Lock, LockedFile};
 use super::{FileContext, Op};
-use crate::mmap;
+use crate::mlock;
 
 /// [`Lock`] + `mlockall(MCL_CURRENT)` after all files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,7 @@ impl Op for Lockall {
     }
 
     fn finish(&self) -> crate::Result<()> {
-        mmap::mlockall_current()?;
+        mlock::mlockall_current()?;
         Ok(())
     }
 }

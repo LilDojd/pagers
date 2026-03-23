@@ -261,6 +261,77 @@ mod tests {
                     let pm = <$t>::from_bools(std::iter::empty());
                     assert!(PageMapSlice::is_empty(&pm));
                 }
+
+                #[test]
+                fn from_residency_bytes_empty() {
+                    let pm = <$t>::from_residency_bytes(vec![]);
+                    assert!(PageMapSlice::is_empty(&pm));
+                }
+
+                #[test]
+                fn from_residency_bytes_all_zero() {
+                    let pm = <$t>::from_residency_bytes(vec![0; 8]);
+                    assert_eq!(PageMapSlice::len(&pm), 8);
+                    assert_eq!(PageMapSlice::count_filled(&pm), 0);
+                }
+
+                #[test]
+                fn from_residency_bytes_all_resident() {
+                    let pm = <$t>::from_residency_bytes(vec![1; 8]);
+                    assert_eq!(PageMapSlice::len(&pm), 8);
+                    assert_eq!(PageMapSlice::count_filled(&pm), 8);
+                }
+
+                #[test]
+                fn from_residency_bytes_nonzero_values() {
+                    let pm = <$t>::from_residency_bytes(vec![0xFF, 0x02, 0x80, 0]);
+                    assert_eq!(PageMapSlice::len(&pm), 4);
+                    assert_eq!(PageMapSlice::count_filled(&pm), 3);
+                }
+
+                #[test]
+                fn from_residency_bytes_single() {
+                    let resident = <$t>::from_residency_bytes(vec![1]);
+                    assert_eq!(PageMapSlice::len(&resident), 1);
+                    assert_eq!(PageMapSlice::count_filled(&resident), 1);
+
+                    let absent = <$t>::from_residency_bytes(vec![0]);
+                    assert_eq!(PageMapSlice::len(&absent), 1);
+                    assert_eq!(PageMapSlice::count_filled(&absent), 0);
+                }
+
+                #[test]
+                fn from_residency_bytes_alternating() {
+                    let pm = <$t>::from_residency_bytes(vec![1, 0, 1, 0, 1, 0]);
+                    assert_eq!(PageMapSlice::len(&pm), 6);
+                    assert_eq!(PageMapSlice::count_filled(&pm), 3);
+                }
+
+                #[test]
+                fn from_residency_bytes_matches_from_bools() {
+                    let bytes = vec![0u8, 1, 0, 0xFF, 1, 0, 0x42, 0];
+                    let from_bytes = <$t>::from_residency_bytes(bytes.clone());
+                    let from_bools = <$t>::from_bools(bytes.iter().map(|&b| b != 0));
+                    assert_eq!(
+                        PageMapSlice::len(&from_bytes),
+                        PageMapSlice::len(&from_bools)
+                    );
+                    assert_eq!(
+                        PageMapSlice::count_filled(&from_bytes),
+                        PageMapSlice::count_filled(&from_bools),
+                    );
+                }
+
+                #[test]
+                fn from_residency_bytes_across_word_boundary() {
+                    // 65 elements crosses a 64-bit word boundary
+                    let mut bytes = vec![1u8; 65];
+                    bytes[63] = 0;
+                    bytes[64] = 1;
+                    let pm = <$t>::from_residency_bytes(bytes);
+                    assert_eq!(PageMapSlice::len(&pm), 65);
+                    assert_eq!(PageMapSlice::count_filled(&pm), 64);
+                }
             }
         };
     }
