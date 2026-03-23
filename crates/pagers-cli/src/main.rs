@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use pagers_core::ops;
-use pagers_core::output::{OutputFormat as CoreOutputFormat, Summary};
 
 use clap::Parser;
 
@@ -13,8 +12,8 @@ mod runop;
 pub mod size_range;
 mod tracing;
 use cli::*;
-use daemon::Daemonize;
-use runop::RunOp;
+use daemon::DaemonCmd;
+use runop::{Run, SimpleCmd};
 use size_range::{SizeRange, parse_size};
 
 #[derive(thiserror::Error, Debug)]
@@ -54,57 +53,10 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
     match cli.command {
-        Command::Query(a) => run_and_summarize(ops::Query, a.common(), term),
-        Command::Touch(a) => run_and_summarize(ops::Touch, a.common(), term),
-        Command::Evict(a) => run_and_summarize(ops::Evict, a.common(), term),
-        Command::Lock(a) => run_lock(ops::Lock, &a, term),
-        Command::Lockall(a) => run_lock(ops::Lockall, &a, term),
+        Command::Query(a) => SimpleCmd::new(ops::Query, a.common(), term).run(),
+        Command::Touch(a) => SimpleCmd::new(ops::Touch, a.common(), term).run(),
+        Command::Evict(a) => SimpleCmd::new(ops::Evict, a.common(), term).run(),
+        Command::Lock(a) => DaemonCmd::new(ops::Lock, &a, term).run(),
+        Command::Lockall(a) => DaemonCmd::new(ops::Lockall, &a, term).run(),
     }
-}
-
-fn run_and_summarize<O: RunOp>(
-    op: O,
-    common: &CommonArgs,
-    term: &Arc<AtomicBool>,
-) -> Result<(), Error>
-where
-    O::Output: 'static,
-{
-    let (stats, _, elapsed) = op.run(common, true, term)?;
-    maybe_print_summary::<O>(&stats, elapsed, common);
-    Ok(())
-}
-
-fn run_lock<O: Daemonize>(
-    op: O,
-    a: &WithCommon<LockInner>,
-    term: &Arc<AtomicBool>,
-) -> Result<(), Error>
-where
-    O::Output: 'static,
-{
-    if a.inner.daemon {
-        op.run_daemonized(a, term)
-    } else {
-        op.run(a.common(), false, term)?;
-        Ok(())
-    }
-}
-
-fn maybe_print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, common: &CommonArgs) {
-    use std::io::IsTerminal;
-
-    if common.verbosity.is_silent() {
-        return;
-    }
-    if std::io::stdout().is_terminal() {
-        return;
-    }
-    let format = match &common.output {
-        Some(OutputFormat::Kv) => CoreOutputFormat::Kv,
-        Some(OutputFormat::Json) => CoreOutputFormat::Json,
-        None => CoreOutputFormat::Human,
-    };
-    let summary = Summary::from_stats(stats, elapsed);
-    format.print_summary(&summary, O::LABEL);
 }

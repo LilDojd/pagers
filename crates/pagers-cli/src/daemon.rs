@@ -5,31 +5,44 @@ use std::sync::atomic::AtomicBool;
 use pagers_core::{mmap, ops, output};
 
 use crate::Error;
-use crate::RunOp;
 use crate::cli::{LockInner, WithCommon};
+use crate::runop::{Run, run_op};
 
-pub(crate) trait Daemonize: RunOp
+pub(crate) struct DaemonCmd<'a, O> {
+    op: O,
+    args: &'a WithCommon<LockInner>,
+    term: &'a Arc<AtomicBool>,
+}
+
+impl<'a, O: ops::Op + Send + 'static> DaemonCmd<'a, O>
 where
-    Self::Output: 'static,
+    O::Output: 'static,
 {
-    fn run_daemonized(
-        &self,
-        a: &WithCommon<LockInner>,
-        term: &Arc<AtomicBool>,
-    ) -> Result<(), Error> {
-        match go_daemon(a.inner.wait)? {
-            ForkOutcome::Parent => Ok(()),
-            ForkOutcome::Child(notify_fd) => {
-                let (stats, _, _) = self.run(a.common(), false, term)?;
-                hold(&stats, &a.inner, term, notify_fd);
-                Ok(())
-            }
-        }
+    pub fn new(op: O, args: &'a WithCommon<LockInner>, term: &'a Arc<AtomicBool>) -> Self {
+        Self { op, args, term }
     }
 }
 
-impl Daemonize for ops::Lock {}
-impl Daemonize for ops::Lockall {}
+impl<O: ops::Op + Send + 'static> Run for DaemonCmd<'_, O>
+where
+    O::Output: 'static,
+{
+    fn run(self) -> Result<(), Error> {
+        if self.args.inner.daemon {
+            match go_daemon(self.args.inner.wait)? {
+                ForkOutcome::Parent => Ok(()),
+                ForkOutcome::Child(notify_fd) => {
+                    let (stats, _, _) = run_op(&self.op, self.args.common(), false, self.term)?;
+                    hold(&stats, &self.args.inner, self.term, notify_fd);
+                    Ok(())
+                }
+            }
+        } else {
+            run_op(&self.op, self.args.common(), false, self.term)?;
+            Ok(())
+        }
+    }
+}
 
 enum ForkOutcome {
     Parent,
