@@ -241,8 +241,7 @@ mod tests {
                     let file = File::open(f.path()).unwrap();
                     let mmap_check =
                         unsafe { memmap2::MmapOptions::new().len(size).map(&file).unwrap() };
-                    let residency: $t =
-                        crate::mincore::residency(&mmap_check, size).unwrap();
+                    let residency: $t = crate::mincore::residency(&mmap_check, size).unwrap();
                     assert!(
                         (0..residency.len()).all(|i| residency[i..i + 1].count_filled() == 1),
                         "expected all pages resident after touch"
