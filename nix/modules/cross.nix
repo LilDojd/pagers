@@ -36,10 +36,14 @@
           ];
         };
     in
-    {
-      packages = lib.mapAttrs'
+    let
+      crossPackages = lib.mapAttrs'
         (target: crossPkgs:
           lib.nameValuePair "pagers-${target}" (makeCrossPackage target crossPkgs))
         crossTargets;
+    in
+    {
+      packages = crossPackages;
+      checks = crossPackages;
     };
 }
