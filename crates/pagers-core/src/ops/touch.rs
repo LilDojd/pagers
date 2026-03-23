@@ -21,6 +21,8 @@ impl Op for Touch {
         let page_size = *crate::pagesize::PAGE_SIZE;
         let total_pages = len.div_ceil(page_size);
 
+        const PROGRESS_INTERVAL: usize = 256;
+
         std::thread::scope(|s| {
             s.spawn(|| initiate_readahead(ctx));
 
@@ -29,6 +31,11 @@ impl Op for Touch {
                 // SAFETY: offset < len, within the mmap region.
                 unsafe {
                     std::ptr::read_volatile(mmap.as_ptr().add(offset));
+                }
+                if let Some(on_progress) = &ctx.on_progress {
+                    if (page_idx + 1) % PROGRESS_INTERVAL == 0 {
+                        on_progress(page_idx + 1);
+                    }
                 }
             }
         });

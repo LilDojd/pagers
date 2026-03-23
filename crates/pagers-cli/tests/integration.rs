@@ -447,6 +447,157 @@ fn test_query_multiple_files() {
 }
 
 #[test]
+fn test_batch_from_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let f1 = dir.path().join("a.dat");
+    let f2 = dir.path().join("b.dat");
+    fs::write(&f1, vec![0u8; 4096]).unwrap();
+    fs::write(&f2, vec![0u8; 4096]).unwrap();
+
+    let batch_file = dir.path().join("paths.txt");
+    fs::write(&batch_file, format!("{}\n{}\n", f1.display(), f2.display())).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", "-b", batch_file.to_str().unwrap(), "-o", "kv"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=2"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_batch_nul_delimited() {
+    let dir = tempfile::tempdir().unwrap();
+    let f1 = dir.path().join("a.dat");
+    let f2 = dir.path().join("b.dat");
+    let f3 = dir.path().join("c.dat");
+    fs::write(&f1, vec![0u8; 4096]).unwrap();
+    fs::write(&f2, vec![0u8; 4096]).unwrap();
+    fs::write(&f3, vec![0u8; 4096]).unwrap();
+
+    let batch_file = dir.path().join("paths.0");
+    let mut content = Vec::new();
+    for f in [&f1, &f2, &f3] {
+        content.extend_from_slice(f.to_str().unwrap().as_bytes());
+        content.push(b'\0');
+    }
+    fs::write(&batch_file, &content).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-b",
+            batch_file.to_str().unwrap(),
+            "-0",
+            "-o",
+            "kv",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=3"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_batch_combined_with_positional_args() {
+    let dir = tempfile::tempdir().unwrap();
+    let f1 = dir.path().join("positional.dat");
+    let f2 = dir.path().join("batched.dat");
+    fs::write(&f1, vec![0u8; 4096]).unwrap();
+    fs::write(&f2, vec![0u8; 4096]).unwrap();
+
+    let batch_file = dir.path().join("paths.txt");
+    fs::write(&batch_file, format!("{}\n", f2.display())).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-b",
+            batch_file.to_str().unwrap(),
+            "-o",
+            "kv",
+            f1.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=2"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_batch_stdin() {
+    let dir = tempfile::tempdir().unwrap();
+    let f1 = dir.path().join("a.dat");
+    let f2 = dir.path().join("b.dat");
+    fs::write(&f1, vec![0u8; 4096]).unwrap();
+    fs::write(&f2, vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", "-b", "-", "-o", "kv"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            let stdin = child.stdin.as_mut().unwrap();
+            writeln!(stdin, "{}", f1.display()).unwrap();
+            writeln!(stdin, "{}", f2.display()).unwrap();
+            child.wait_with_output()
+        })
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=2"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_batch_empty_lines_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let f1 = dir.path().join("a.dat");
+    fs::write(&f1, vec![0u8; 4096]).unwrap();
+
+    let batch_file = dir.path().join("paths.txt");
+    fs::write(&batch_file, format!("\n\n{}\n\n", f1.display())).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", "-b", batch_file.to_str().unwrap(), "-o", "kv"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Files=1"), "stdout: {stdout}");
+}
+
+#[test]
 fn test_completions_zsh() {
     let dir = build_out_dir();
     let content =

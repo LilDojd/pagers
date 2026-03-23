@@ -32,13 +32,23 @@ pub trait Op: Sync {
     }
 }
 
-#[derive(Debug)]
 pub struct FileContext<'a> {
     pub file: &'a File,
     pub path: &'a Path,
     pub mmap: Arc<Mmap>,
     pub offset: u64,
     pub len: usize,
+    pub on_progress: Option<&'a (dyn Fn(usize) + Sync)>,
+}
+
+impl std::fmt::Debug for FileContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileContext")
+            .field("path", &self.path)
+            .field("offset", &self.offset)
+            .field("len", &self.len)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

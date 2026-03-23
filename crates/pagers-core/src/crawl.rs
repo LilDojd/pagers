@@ -37,77 +37,80 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
 
     let sink = events.map(EventSink::new);
     let sink_ref = sink.as_ref();
-
-    let discovered = if let Some(sink) = sink_ref {
-        file_paths
-            .par_iter()
-            .for_each(|path| match ops::file_info::<PM>(path, range) {
-                Ok(Some(info)) => {
-                    sink.send(Event::FileStart {
-                        path: path.display().to_string(),
-                        total_pages: info.total_pages,
-                        residency: info.residency,
-                    });
-                }
-                Ok(None) => {}
-                Err(e) => tracing::warn!("{}: {e}", path.display()),
-            });
-        true
-    } else {
-        false
-    };
-
-    let with_residency = sink_ref.is_some();
+    let need_residency = sink_ref.is_some();
 
     let outputs: Vec<O::Output> = file_paths
         .par_iter()
         .filter_map(|path| {
-            match ops::process_file::<O, PM>(op, path, range, with_residency && !discovered) {
-                Ok(Some(result)) => {
-                    stats
-                        .total_pages
-                        .fetch_add(result.total_pages as i64, Ordering::Relaxed);
-                    stats.total_files.fetch_add(1, Ordering::Relaxed);
-                    stats
-                        .total_pages_in_core
-                        .fetch_add(result.pages_in_core_before, Ordering::Relaxed);
-                    stats.total_pages_in_core.fetch_add(
-                        result.pages_in_core_after - result.pages_in_core_before,
-                        Ordering::Relaxed,
-                    );
+            let path_str = path.display().to_string();
 
-                    if let Some(sink) = sink_ref {
-                        if let Some(residency) = result.residency_before
-                            && !discovered
-                        {
-                            sink.send(Event::FileStart {
-                                path: path.display().to_string(),
-                                total_pages: result.total_pages,
-                                residency,
-                            });
-                        }
-                        if let Some(residency) = result.residency_after {
-                            sink.send(Event::FileDone {
-                                path: path.display().to_string(),
-                                pages_in_core: result.pages_in_core_after as usize,
-                                total_pages: result.total_pages,
-                                residency,
-                            });
-                        }
+            if let Some(sink) = sink_ref {
+                match ops::file_info::<PM>(path, range) {
+                    Ok(Some(info)) => sink.send(Event::FileStart {
+                        path: path_str.clone(),
+                        total_pages: info.total_pages,
+                        residency: info.residency,
+                    }),
+                    Ok(None) => return None,
+                    Err(e) => {
+                        tracing::warn!("{}: {e}", path.display());
+                        return None;
                     }
-
-                    Some(result.output)
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    None
                 }
             }
+
+            let on_progress;
+            let on_progress_ref = if let Some(sink) = sink_ref {
+                on_progress = |pages_walked: usize| {
+                    sink.send(Event::FileProgress {
+                        path: path_str.clone(),
+                        pages_walked,
+                    });
+                };
+                Some(&on_progress as &(dyn Fn(usize) + Sync))
+            } else {
+                None
+            };
+
+            let result = match ops::process_file::<O, PM>(
+                op,
+                path,
+                range,
+                need_residency,
+                on_progress_ref,
+            ) {
+                Ok(Some(r)) => r,
+                Ok(None) => return None,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    return None;
+                }
+            };
+
+            stats
+                .total_pages
+                .fetch_add(result.total_pages as i64, Ordering::Relaxed);
+            stats.total_files.fetch_add(1, Ordering::Relaxed);
+            stats
+                .total_pages_in_core
+                .fetch_add(result.pages_in_core_after, Ordering::Relaxed);
+
+            if let Some(sink) = sink_ref {
+                if let Some(residency) = result.residency_after {
+                    sink.send(Event::FileDone {
+                        path: path.display().to_string(),
+                        pages_in_core: result.pages_in_core_after as usize,
+                        total_pages: result.total_pages,
+                        residency,
+                    });
+                }
+            }
+
+            Some(result.output)
         })
         .collect();
 
-    if let Some(ref sink) = sink {
+    if let Some(sink) = sink {
         sink.send(Event::AllDone);
     }
 
@@ -131,88 +134,13 @@ fn collect_file_paths(
         }
     }
 
+    let needs_meta = crawl_config.max_file_size.is_some() || !crawl_config.count_hardlinks;
     let mut file_paths = Vec::new();
 
     for path in &all_paths {
         if path.is_dir() {
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
-
-            let mut builder = WalkBuilder::new(path);
-            builder
-                .follow_links(crawl_config.follow_symlinks)
-                .same_file_system(crawl_config.single_filesystem)
-                .hidden(false)
-                .git_ignore(false)
-                .git_global(false)
-                .git_exclude(false);
-
-            if !crawl_config.ignore_patterns.is_empty() || !crawl_config.filter_patterns.is_empty()
-            {
-                let mut overrides = ignore::overrides::OverrideBuilder::new(path);
-                for pat in &crawl_config.ignore_patterns {
-                    let _ = overrides.add(&format!("!{pat}"));
-                }
-                for pat in &crawl_config.filter_patterns {
-                    let _ = overrides.add(pat);
-                }
-                if let Ok(ov) = overrides.build() {
-                    builder.overrides(ov);
-                }
-            }
-
-            for entry in builder.build() {
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(e) => {
-                        tracing::warn!("{e}");
-                        continue;
-                    }
-                };
-
-                let ft = match entry.file_type() {
-                    Some(ft) => ft,
-                    None => continue,
-                };
-
-                if ft.is_dir() || !ft.is_file() {
-                    continue;
-                }
-
-                let entry_path = entry.path();
-
-                let needs_meta =
-                    crawl_config.max_file_size.is_some() || !crawl_config.count_hardlinks;
-                let meta = if needs_meta {
-                    entry_path.metadata().ok()
-                } else {
-                    None
-                };
-
-                if let Some(max_size) = crawl_config.max_file_size
-                    && let Some(ref m) = meta
-                    && m.len() > max_size
-                {
-                    continue;
-                }
-
-                if !crawl_config.count_hardlinks {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::MetadataExt;
-                        if let Some(ref m) = meta
-                            && m.nlink() > 1
-                        {
-                            let key = (m.dev(), m.ino());
-                            if seen_inodes.contains_key(&key) {
-                                continue;
-                            }
-                            seen_inodes.insert(key, ());
-                        }
-                    }
-                }
-
-                file_paths.push(entry_path.to_path_buf());
-            }
+            collect_dir_entries(path, crawl_config, needs_meta, seen_inodes, &mut file_paths);
         } else if path.is_file() {
             file_paths.push(path.clone());
         } else {
@@ -223,38 +151,97 @@ fn collect_file_paths(
     file_paths
 }
 
+fn collect_dir_entries(
+    root: &Path,
+    config: &CrawlConfig,
+    needs_meta: bool,
+    seen_inodes: &DashMap<(u64, u64), ()>,
+    out: &mut Vec<PathBuf>,
+) {
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .follow_links(config.follow_symlinks)
+        .same_file_system(config.single_filesystem)
+        .hidden(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false);
+
+    if !config.ignore_patterns.is_empty() || !config.filter_patterns.is_empty() {
+        let mut overrides = ignore::overrides::OverrideBuilder::new(root);
+        for pat in &config.ignore_patterns {
+            let _ = overrides.add(&format!("!{pat}"));
+        }
+        for pat in &config.filter_patterns {
+            let _ = overrides.add(pat);
+        }
+        if let Ok(ov) = overrides.build() {
+            builder.overrides(ov);
+        }
+    }
+
+    for entry in builder.build() {
+        let Ok(entry) = entry.inspect_err(|e| tracing::warn!("{e}")) else {
+            continue;
+        };
+
+        let Some(ft) = entry.file_type() else {
+            continue;
+        };
+
+        if !ft.is_file() {
+            continue;
+        }
+
+        let entry_path = entry.path();
+        let meta = if needs_meta {
+            entry_path.metadata().ok()
+        } else {
+            None
+        };
+
+        if let Some(max_size) = config.max_file_size
+            && let Some(ref m) = meta
+            && m.len() > max_size
+        {
+            continue;
+        }
+
+        if !config.count_hardlinks {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if let Some(ref m) = meta
+                    && m.nlink() > 1
+                    && seen_inodes.insert((m.dev(), m.ino()), ()).is_some()
+                {
+                    continue;
+                }
+            }
+        }
+
+        out.push(entry_path.to_path_buf());
+    }
+}
+
 fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>> {
-    let mut reader: Box<dyn BufRead> = if path == Path::new("-") {
+    use std::os::unix::ffi::OsStrExt;
+
+    let reader: Box<dyn BufRead> = if path == Path::new("-") {
         Box::new(io::stdin().lock())
     } else {
         Box::new(io::BufReader::new(std::fs::File::open(path)?))
     };
 
-    let mut paths = Vec::new();
-
-    if nul_delim {
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            let n = reader.read_until(0, &mut buf)?;
-            if n == 0 {
-                break;
+    let delim = if nul_delim { b'\0' } else { b'\n' };
+    reader
+        .split(delim)
+        .filter_map(|r| match r {
+            Ok(buf) if !buf.is_empty() => {
+                Some(Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&buf))))
             }
-            if buf.last() == Some(&0) {
-                buf.pop();
-            }
-            if !buf.is_empty() {
-                paths.push(PathBuf::from(String::from_utf8_lossy(&buf).into_owned()));
-            }
-        }
-    } else {
-        for line in reader.lines() {
-            let line = line?;
-            if !line.is_empty() {
-                paths.push(PathBuf::from(line));
-            }
-        }
-    }
-
-    Ok(paths)
+            Ok(_) => None,
+            Err(e) => Some(Err(e)),
+        })
+        .collect()
 }

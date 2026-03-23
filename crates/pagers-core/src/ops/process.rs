@@ -29,9 +29,10 @@ fn page_count<PM: PageMap>(
     mmap: &memmap2::Mmap,
     offset: u64,
     len: usize,
+    need_residency: bool,
 ) -> crate::Result<(i64, Option<PM>)> {
     #[cfg(target_os = "linux")]
-    if *crate::cachestat::SUPPORTED {
+    if !need_residency && *crate::cachestat::SUPPORTED {
         use std::os::unix::io::AsFd;
         let count = crate::cachestat::cached_pages(file.as_fd(), offset, len as u64)? as i64;
         return Ok((count, None));
@@ -40,15 +41,6 @@ fn page_count<PM: PageMap>(
     let residency: PM = crate::mincore::residency(mmap, len)?;
     let count = residency.count_filled() as i64;
     Ok((count, Some(residency)))
-}
-
-fn page_count_with_residency<PM: PageMap>(
-    mmap: &memmap2::Mmap,
-    len: usize,
-) -> crate::Result<(i64, PM)> {
-    let residency: PM = crate::mincore::residency(mmap, len)?;
-    let count = residency.count_filled() as i64;
-    Ok((count, residency))
 }
 
 pub fn file_info<PM: PageMap>(
@@ -84,6 +76,7 @@ pub fn process_file<O: Op, PM: PageMap>(
     path: &Path,
     range: &FileRange,
     with_residency: bool,
+    on_progress: Option<&(dyn Fn(usize) + Sync)>,
 ) -> crate::Result<Option<FileResult<O::Output, PM>>> {
     let io_err = |e| Error::io(path.display().to_string(), e);
 
@@ -111,13 +104,8 @@ pub fn process_file<O: Op, PM: PageMap>(
             .map_err(io_err)?
     });
 
-    let (pages_in_core_before, residency_before) = if with_residency {
-        let (count, pm) = page_count_with_residency::<PM>(&mmap, len)?;
-        (count, Some(pm))
-    } else {
-        let (count, _) = page_count::<PM>(&file, &mmap, offset, len)?;
-        (count, None)
-    };
+    let (pages_in_core_before, residency_before) =
+        page_count::<PM>(&file, &mmap, offset, len, with_residency)?;
 
     let ctx = FileContext {
         file: &file,
@@ -125,17 +113,13 @@ pub fn process_file<O: Op, PM: PageMap>(
         mmap: Arc::clone(&mmap),
         offset,
         len,
+        on_progress,
     };
 
     let output = op.execute(&ctx)?;
 
-    let (pages_in_core_after, residency_after) = if with_residency {
-        let (count, pm) = page_count_with_residency::<PM>(&mmap, len)?;
-        (count, Some(pm))
-    } else {
-        let (count, _) = page_count::<PM>(&file, &mmap, offset, len)?;
-        (count, None)
-    };
+    let (pages_in_core_after, residency_after) =
+        page_count::<PM>(&file, &mmap, offset, len, with_residency)?;
 
     Ok(Some(FileResult {
         output,
@@ -180,7 +164,7 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, false)
+                    let result: R<()> = process_file(&Query, f.path(), &range, false, None)
                         .unwrap()
                         .unwrap();
                     assert_eq!(result.total_pages, 4);
@@ -194,7 +178,7 @@ mod tests {
                         max_len: None,
                     };
                     let result: Option<R<()>> =
-                        process_file(&Query, f.path(), &range, false).unwrap();
+                        process_file(&Query, f.path(), &range, false, None).unwrap();
                     assert!(result.is_none());
                 }
 
@@ -206,7 +190,7 @@ mod tests {
                         max_len: None,
                     };
                     let result: crate::Result<Option<R<()>>> =
-                        process_file(&Query, f.path(), &range, false);
+                        process_file(&Query, f.path(), &range, false, None);
                     assert!(result.is_err());
                     let err = result.unwrap_err();
                     assert!(
@@ -223,7 +207,7 @@ mod tests {
                         offset: 0,
                         max_len: Some((page_size * 2) as u64),
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, false)
+                    let result: R<()> = process_file(&Query, f.path(), &range, false, None)
                         .unwrap()
                         .unwrap();
                     assert_eq!(result.total_pages, 2);
@@ -237,8 +221,8 @@ mod tests {
                         max_len: None,
                     };
 
-                    process_file::<_, $t>(&Evict, f.path(), &range, false).unwrap();
-                    process_file::<_, $t>(&Touch, f.path(), &range, false).unwrap();
+                    process_file::<_, $t>(&Evict, f.path(), &range, false, None).unwrap();
+                    process_file::<_, $t>(&Touch, f.path(), &range, false, None).unwrap();
 
                     let file = File::open(f.path()).unwrap();
                     let mmap_check =
@@ -258,7 +242,7 @@ mod tests {
                         max_len: None,
                     };
                     let result: crate::Result<Option<R<()>>> =
-                        process_file(&Evict, f.path(), &range, false);
+                        process_file(&Evict, f.path(), &range, false, None);
                     assert!(result.is_ok());
                 }
 
@@ -269,7 +253,7 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, true)
+                    let result: R<()> = process_file(&Query, f.path(), &range, true, None)
                         .unwrap()
                         .unwrap();
                     assert!(result.residency_before.is_some());
@@ -284,7 +268,7 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, false)
+                    let result: R<()> = process_file(&Query, f.path(), &range, false, None)
                         .unwrap()
                         .unwrap();
                     if *crate::cachestat::SUPPORTED {
@@ -304,6 +288,7 @@ mod tests {
                         std::path::Path::new("/nonexistent/file.dat"),
                         &range,
                         false,
+                        None,
                     );
                     assert!(result.is_err());
                 }
