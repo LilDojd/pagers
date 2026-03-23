@@ -1,5 +1,7 @@
 use super::{FileContext, Op};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Query;
 
 impl Op for Query {

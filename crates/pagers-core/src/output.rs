@@ -22,6 +22,8 @@ pub fn pretty_size(bytes: i64) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Summary {
     pub total_files: i64,
     pub total_dirs: i64,

@@ -1,7 +1,6 @@
-//! Directory traversal with inode dedup and filtering.
-
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 
 use dashmap::DashMap;
@@ -11,6 +10,8 @@ use rayon::prelude::*;
 use crate::events::{Event, EventSink};
 use crate::ops::{self, FileRange, Op, Stats};
 
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CrawlConfig {
     pub follow_symlinks: bool,
     pub single_filesystem: bool,
@@ -36,30 +37,73 @@ pub fn crawl_and_process<O: Op>(
     let sink = events.map(EventSink::new);
     let sink_ref = sink.as_ref();
 
-    // Discovery phase: send FileStart for all files so the TUI sees them upfront.
     let discovered = if let Some(sink) = sink_ref {
-        file_paths.par_iter().for_each(|path| {
-            if let Err(e) = ops::send_file_start(path, range, sink) {
-                tracing::warn!("{}: {e}", path.display());
-            }
-        });
+        file_paths
+            .par_iter()
+            .for_each(|path| match ops::file_info(path, range) {
+                Ok(Some(info)) => {
+                    sink.send(Event::FileStart {
+                        path: path.display().to_string(),
+                        total_pages: info.total_pages,
+                        residency: info.residency,
+                    });
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!("{}: {e}", path.display()),
+            });
         true
     } else {
         false
     };
 
+    let with_residency = sink_ref.is_some();
+
     let outputs: Vec<O::Output> = file_paths
         .par_iter()
-        .filter_map(
-            |path| match ops::process_file(op, path, range, stats, sink_ref, discovered) {
-                Ok(Some(output)) => Some(output),
+        .filter_map(|path| {
+            match ops::process_file(op, path, range, with_residency && !discovered) {
+                Ok(Some(result)) => {
+                    stats
+                        .total_pages
+                        .fetch_add(result.total_pages as i64, Ordering::Relaxed);
+                    stats.total_files.fetch_add(1, Ordering::Relaxed);
+                    stats
+                        .total_pages_in_core
+                        .fetch_add(result.pages_in_core_before, Ordering::Relaxed);
+                    stats.total_pages_in_core.fetch_add(
+                        result.pages_in_core_after - result.pages_in_core_before,
+                        Ordering::Relaxed,
+                    );
+
+                    if let Some(sink) = sink_ref {
+                        if let Some(residency) = result.residency_before {
+                            if !discovered {
+                                sink.send(Event::FileStart {
+                                    path: path.display().to_string(),
+                                    total_pages: result.total_pages,
+                                    residency,
+                                });
+                            }
+                        }
+                        if let Some(residency) = result.residency_after {
+                            sink.send(Event::FileDone {
+                                path: path.display().to_string(),
+                                pages_in_core: result.pages_in_core_after as usize,
+                                total_pages: result.total_pages,
+                                residency,
+                            });
+                        }
+                    }
+
+                    Some(result.output)
+                }
                 Ok(None) => None,
                 Err(e) => {
                     tracing::warn!("{e}");
                     None
                 }
-            },
-        )
+            }
+        })
         .collect();
 
     if let Some(ref sink) = sink {
@@ -90,7 +134,6 @@ fn collect_file_paths(
 
     for path in &all_paths {
         if path.is_dir() {
-            use std::sync::atomic::Ordering;
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
 
             let mut builder = WalkBuilder::new(path);

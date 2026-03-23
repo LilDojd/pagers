@@ -7,9 +7,12 @@ use super::{FileContext, Op};
 use crate::mmap;
 
 /// Touch pages into cache, then lock them in physical memory with mlock(2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Lock;
 
 /// Holds the mmap alive after mlock — dropping this unmaps and unlocks.
+#[derive(Debug)]
 pub struct LockedFile {
     _mmap: Arc<Mmap>,
 }

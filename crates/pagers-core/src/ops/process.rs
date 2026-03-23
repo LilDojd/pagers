@@ -1,14 +1,12 @@
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use bitvec::vec::BitVec;
 use memmap2::MmapOptions;
 
-use super::{FileContext, FileRange, Op, Stats};
+use super::{FileContext, FileInfo, FileRange, FileResult, Op};
 use crate::Error;
-use crate::events::{Event, EventSink};
 
 fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
     if file_len == 0 {
@@ -25,17 +23,40 @@ fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
     Some((offset, len))
 }
 
-pub fn send_file_start(path: &Path, range: &FileRange, sink: &EventSink) -> crate::Result<()> {
+fn page_count(
+    file: &File,
+    mmap: &memmap2::Mmap,
+    offset: u64,
+    len: usize,
+) -> crate::Result<(i64, Option<BitVec>)> {
+    if *crate::cachestat::SUPPORTED {
+        use std::os::unix::io::AsFd;
+        let count = crate::cachestat::cached_pages(file.as_fd(), offset, len as u64)? as i64;
+        Ok((count, None))
+    } else {
+        let residency: BitVec = crate::mincore::residency(mmap, len)?;
+        let count = residency.count_ones() as i64;
+        Ok((count, Some(residency)))
+    }
+}
+
+fn page_count_with_residency(mmap: &memmap2::Mmap, len: usize) -> crate::Result<(i64, BitVec)> {
+    let residency: BitVec = crate::mincore::residency(mmap, len)?;
+    let count = residency.count_ones() as i64;
+    Ok((count, residency))
+}
+
+pub fn file_info(path: &Path, range: &FileRange) -> crate::Result<Option<FileInfo>> {
     let io_err = |e| Error::io(path.display().to_string(), e);
 
     let file = File::open(path).map_err(io_err)?;
     let file_len = file.metadata().map_err(io_err)?.len();
 
     let Some((offset, len)) = effective_range(file_len, range) else {
-        return Ok(());
+        return Ok(None);
     };
 
-    let pages_in_range = len.div_ceil(*crate::pagesize::PAGE_SIZE);
+    let total_pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
     let mmap = unsafe {
         MmapOptions::new()
             .offset(offset)
@@ -44,30 +65,19 @@ pub fn send_file_start(path: &Path, range: &FileRange, sink: &EventSink) -> crat
             .map_err(io_err)?
     };
     let residency: BitVec = crate::mincore::residency(&mmap, len)?;
-    sink.send(Event::FileStart {
-        path: path.display().to_string(),
-        total_pages: pages_in_range,
+    Ok(Some(FileInfo {
+        total_pages,
         residency,
-    });
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn cachestat_count(file: &File, offset: u64, len: u64) -> crate::Result<i64> {
-    use std::os::unix::io::AsFd;
-    Ok(crate::cachestat::cached_pages(file.as_fd(), offset, len)? as i64)
+    }))
 }
 
 pub fn process_file<O: Op>(
     op: &O,
     path: &Path,
     range: &FileRange,
-    stats: &Stats,
-    events: Option<&EventSink>,
-    discovered: bool,
-) -> crate::Result<Option<O::Output>> {
+    with_residency: bool,
+) -> crate::Result<Option<FileResult<O::Output>>> {
     let io_err = |e| Error::io(path.display().to_string(), e);
-    let path_str = || path.display().to_string();
 
     let file = File::open(path).map_err(io_err)?;
     let file_len = file.metadata().map_err(io_err)?.len();
@@ -83,10 +93,7 @@ pub fn process_file<O: Op>(
             file_len,
         })?;
 
-    let pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
-
-    stats.total_pages.fetch_add(pages as i64, Ordering::Relaxed);
-    stats.total_files.fetch_add(1, Ordering::Relaxed);
+    let total_pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
 
     let mmap = Arc::new(unsafe {
         MmapOptions::new()
@@ -96,29 +103,13 @@ pub fn process_file<O: Op>(
             .map_err(io_err)?
     });
 
-    let need_bitmap = events.is_some() && !discovered;
-
-    let pages_in_core = if need_bitmap {
-        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
-        let count = residency.count_ones() as i64;
-        if let Some(sink) = events {
-            sink.send(Event::FileStart {
-                path: path_str(),
-                total_pages: pages,
-                residency,
-            });
-        }
-        count
-    } else if *crate::cachestat::SUPPORTED {
-        cachestat_count(&file, offset, len as u64)?
+    let (pages_in_core_before, residency_before) = if with_residency {
+        let (count, bv) = page_count_with_residency(&mmap, len)?;
+        (count, Some(bv))
     } else {
-        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
-        residency.count_ones() as i64
+        let (count, _) = page_count(&file, &mmap, offset, len)?;
+        (count, None)
     };
-
-    stats
-        .total_pages_in_core
-        .fetch_add(pages_in_core, Ordering::Relaxed);
 
     let ctx = FileContext {
         file: &file,
@@ -126,42 +117,33 @@ pub fn process_file<O: Op>(
         mmap: Arc::clone(&mmap),
         offset,
         len,
-        events,
     };
 
     let output = op.execute(&ctx)?;
 
-    let final_in_core = if events.is_some() {
-        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
-        let count = residency.count_ones() as i64;
-
-        if let Some(sink) = events {
-            sink.send(Event::FileDone {
-                path: path_str(),
-                pages_in_core: count as usize,
-                total_pages: pages,
-                residency,
-            });
-        }
-        count
-    } else if *crate::cachestat::SUPPORTED {
-        cachestat_count(&file, offset, len as u64)?
+    let (pages_in_core_after, residency_after) = if with_residency {
+        let (count, bv) = page_count_with_residency(&mmap, len)?;
+        (count, Some(bv))
     } else {
-        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
-        residency.count_ones() as i64
+        let (count, _) = page_count(&file, &mmap, offset, len)?;
+        (count, None)
     };
 
-    stats
-        .total_pages_in_core
-        .fetch_add(final_in_core - pages_in_core, Ordering::Relaxed);
-
-    Ok(Some(output))
+    Ok(Some(FileResult {
+        output,
+        total_pages,
+        pages_in_core_before,
+        pages_in_core_after,
+        residency_before,
+        residency_after,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::atomic::Ordering;
 
     use super::super::*;
 
@@ -176,40 +158,36 @@ mod tests {
 
     #[test]
     fn test_process_file_query_counts_pages() {
-        let (f, _size) = create_temp_file(4);
-        let stats = Stats::new();
+        let (f, _) = create_temp_file(4);
         let range = FileRange {
             offset: 0,
             max_len: None,
         };
-        let result = process_file(&Query, f.path(), &range, &stats, None, false).unwrap();
-        assert!(result.is_some());
-        assert_eq!(stats.total_pages.load(Ordering::Relaxed), 4);
-        assert_eq!(stats.total_files.load(Ordering::Relaxed), 1);
+        let result = process_file(&Query, f.path(), &range, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.total_pages, 4);
     }
 
     #[test]
     fn test_process_file_empty_file_returns_none() {
         let f = tempfile::NamedTempFile::new().unwrap();
-        let stats = Stats::new();
         let range = FileRange {
             offset: 0,
             max_len: None,
         };
-        let result = process_file(&Query, f.path(), &range, &stats, None, false).unwrap();
+        let result = process_file(&Query, f.path(), &range, false).unwrap();
         assert!(result.is_none());
-        assert_eq!(stats.total_files.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn test_process_file_offset_beyond_file() {
         let (f, _) = create_temp_file(1);
-        let stats = Stats::new();
         let range = FileRange {
             offset: 1_000_000,
             max_len: None,
         };
-        let result = process_file(&Query, f.path(), &range, &stats, None, false);
+        let result = process_file(&Query, f.path(), &range, false);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -222,28 +200,26 @@ mod tests {
     fn test_process_file_with_max_len() {
         let (f, _) = create_temp_file(8);
         let page_size = *crate::pagesize::PAGE_SIZE;
-        let stats = Stats::new();
         let range = FileRange {
             offset: 0,
             max_len: Some((page_size * 2) as u64),
         };
-        process_file(&Query, f.path(), &range, &stats, None, false).unwrap();
-        assert_eq!(stats.total_pages.load(Ordering::Relaxed), 2);
+        let result = process_file(&Query, f.path(), &range, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.total_pages, 2);
     }
 
     #[test]
     fn test_process_file_touch_makes_resident() {
         let (f, size) = create_temp_file(4);
-        let stats = Stats::new();
         let range = FileRange {
             offset: 0,
             max_len: None,
         };
 
-        process_file(&Evict, f.path(), &range, &stats, None, false).unwrap();
-
-        let stats2 = Stats::new();
-        process_file(&Touch, f.path(), &range, &stats2, None, false).unwrap();
+        process_file(&Evict, f.path(), &range, false).unwrap();
+        process_file(&Touch, f.path(), &range, false).unwrap();
 
         let file = File::open(f.path()).unwrap();
         let mmap_check = unsafe { memmap2::MmapOptions::new().len(size).map(&file).unwrap() };
@@ -254,46 +230,47 @@ mod tests {
     #[test]
     fn test_process_file_evict_succeeds() {
         let (f, _) = create_temp_file(4);
-        let stats = Stats::new();
         let range = FileRange {
             offset: 0,
             max_len: None,
         };
-
-        let result = process_file(&Evict, f.path(), &range, &stats, None, false);
+        let result = process_file(&Evict, f.path(), &range, false);
         assert!(result.is_ok());
-        assert_eq!(stats.total_files.load(Ordering::Relaxed), 1);
     }
 
     #[test]
-    fn test_process_file_sends_events() {
+    fn test_process_file_with_residency() {
         let (f, _) = create_temp_file(4);
-        let stats = Stats::new();
         let range = FileRange {
             offset: 0,
             max_len: None,
         };
-        let (tx, rx) = std::sync::mpsc::channel();
-        let sink = crate::events::EventSink::new(tx);
-        process_file(&Query, f.path(), &range, &stats, Some(&sink), false).unwrap();
-        drop(sink);
+        let result = process_file(&Query, f.path(), &range, true)
+            .unwrap()
+            .unwrap();
+        assert!(result.residency_before.is_some());
+        assert!(result.residency_after.is_some());
+        assert_eq!(result.residency_before.unwrap().len(), 4);
+    }
 
-        let events: Vec<_> = rx.iter().collect();
-        assert!(
-            events.len() >= 2,
-            "expected at least 2 events, got {}",
-            events.len()
-        );
-        assert!(matches!(&events[0], crate::events::Event::FileStart { .. }));
-        assert!(matches!(
-            events.last().unwrap(),
-            crate::events::Event::FileDone { .. }
-        ));
+    #[test]
+    fn test_process_file_without_residency() {
+        let (f, _) = create_temp_file(4);
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+        let result = process_file(&Query, f.path(), &range, false)
+            .unwrap()
+            .unwrap();
+        if *crate::cachestat::SUPPORTED {
+            assert!(result.residency_before.is_none());
+            assert!(result.residency_after.is_none());
+        }
     }
 
     #[test]
     fn test_process_file_nonexistent_returns_error() {
-        let stats = Stats::new();
         let range = FileRange {
             offset: 0,
             max_len: None,
@@ -302,11 +279,21 @@ mod tests {
             &Query,
             std::path::Path::new("/nonexistent/file.dat"),
             &range,
-            &stats,
-            None,
             false,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_info() {
+        let (f, _) = create_temp_file(4);
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+        let info = file_info(f.path(), &range).unwrap().unwrap();
+        assert_eq!(info.total_pages, 4);
+        assert_eq!(info.residency.len(), 4);
     }
 
     #[test]

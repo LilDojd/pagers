@@ -5,7 +5,8 @@ use std::sync::mpsc::Sender;
 
 use bitvec::prelude::*;
 
-/// Events sent from core processing to UI consumers.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Event {
     /// A file has started processing. Includes initial residency snapshot.
     FileStart {

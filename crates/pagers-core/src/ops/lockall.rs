@@ -3,6 +3,8 @@ use super::{FileContext, Op};
 use crate::mmap;
 
 /// [`Lock`] + `mlockall(MCL_CURRENT)` after all files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Lockall;
 
 impl Op for Lockall {

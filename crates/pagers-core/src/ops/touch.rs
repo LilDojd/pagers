@@ -2,6 +2,8 @@ use memmap2::Advice;
 
 use super::{FileContext, Op};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Touch;
 
 impl Op for Touch {
@@ -27,16 +29,6 @@ impl Op for Touch {
                 // SAFETY: offset < len, within the mmap region.
                 unsafe {
                     std::ptr::read_volatile(mmap.as_ptr().add(offset));
-                }
-
-                if let Some(sink) = ctx.events
-                    && page_idx > 0
-                    && page_idx % 4096 == 0
-                {
-                    sink.send(crate::events::Event::FileProgress {
-                        path: ctx.path.display().to_string(),
-                        pages_walked: page_idx,
-                    });
                 }
             }
         });
