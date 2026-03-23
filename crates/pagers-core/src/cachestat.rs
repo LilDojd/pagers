@@ -95,6 +95,14 @@ pub fn cached_pages(
         Err(Errno::last())
     }
 }
+#[cfg(target_os = "macos")]
+pub fn cached_pages(
+    _fd: std::os::unix::io::BorrowedFd<'_>,
+    _offset: u64,
+    _len: u64,
+) -> nix::Result<u64> {
+    unreachable!()
+}
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,11 @@
 use memmap2::Mmap;
 use nix::errno::Errno;
 
+#[cfg(target_os = "linux")]
+type MincoreMutVecRef = *mut u8;
+#[cfg(target_os = "macos")]
+type MincoreMutVecRef = *mut i8;
+
 pub fn residency<T>(mmap: &Mmap, len: usize) -> nix::Result<T>
 where
     T: std::iter::FromIterator<bool>,
@@ -17,7 +22,7 @@ where
         if libc::mincore(
             mmap.as_ptr() as *mut libc::c_void,
             len,
-            vec_out.as_mut_ptr(),
+            vec_out.as_mut_ptr() as MincoreMutVecRef,
         ) != 0
         {
             return Err(Errno::last());
