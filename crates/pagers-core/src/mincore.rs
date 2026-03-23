@@ -1,8 +1,10 @@
-use bitvec::prelude::*;
 use memmap2::Mmap;
 use nix::errno::Errno;
 
-pub fn residency(mmap: &Mmap, len: usize) -> nix::Result<BitVec> {
+pub fn residency<T>(mmap: &Mmap, len: usize) -> nix::Result<T>
+where
+    T: std::iter::FromIterator<bool>,
+{
     let page_size = *crate::pagesize::PAGE_SIZE;
     let vec_len = len.div_ceil(page_size);
     let mut vec_out: Vec<u8> = Vec::with_capacity(vec_len);
@@ -29,6 +31,7 @@ pub fn residency(mmap: &Mmap, len: usize) -> nix::Result<BitVec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::bitvec::vec::BitVec;
     use memmap2::MmapOptions;
     use std::io::Write;
 
@@ -42,29 +45,39 @@ mod tests {
         (f, mmap)
     }
 
-    #[test]
-    fn test_mincore_returns_correct_page_count() {
-        let ps = *crate::pagesize::PAGE_SIZE;
-        let size = ps * 4;
-        let (_f, mmap) = create_temp_file(size);
+    macro_rules! residency_tests {
+        ($t:ty, $mod:ident) => {
+            mod $mod {
+                use super::*;
 
-        let res = residency(&mmap, size).unwrap();
-        assert_eq!(res.len(), 4);
+                #[test]
+                fn page_count() {
+                    let ps = *crate::pagesize::PAGE_SIZE;
+                    let size = ps * 4;
+                    let (_f, mmap) = create_temp_file(size);
+                    let res: $t = residency(&mmap, size).unwrap();
+                    assert_eq!(res.len(), 4);
+                }
+
+                #[test]
+                fn after_touch_all_resident() {
+                    let ps = *crate::pagesize::PAGE_SIZE;
+                    let size = ps * 4;
+                    let (_f, mmap) = create_temp_file(size);
+
+                    let mut junk: u8 = 0;
+                    for i in 0..4 {
+                        junk = junk.wrapping_add(mmap[i * ps]);
+                    }
+                    let _ = junk;
+
+                    let res: $t = residency(&mmap, size).unwrap();
+                    assert!(res.iter().all(|r| *r));
+                }
+            }
+        };
     }
 
-    #[test]
-    fn test_mincore_after_touch_shows_resident() {
-        let ps = *crate::pagesize::PAGE_SIZE;
-        let size = ps * 4;
-        let (_f, mmap) = create_temp_file(size);
-
-        let mut junk: u8 = 0;
-        for i in 0..4 {
-            junk = junk.wrapping_add(mmap[i * ps]);
-        }
-        let _ = junk;
-
-        let res = residency(&mmap, size).unwrap();
-        assert!(res.iter().all(|r| *r));
-    }
+    residency_tests!(Vec<bool>, vec_bool);
+    residency_tests!(BitVec, bitvec);
 }

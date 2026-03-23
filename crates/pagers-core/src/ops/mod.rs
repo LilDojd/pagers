@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use bitvec::vec::BitVec;
 use memmap2::{Mmap, MmapOptions};
 
 use crate::Error;
@@ -109,7 +110,7 @@ pub fn send_file_start(path: &Path, range: &FileRange, sink: &EventSink) -> crat
             .map(&file)
             .map_err(io_err)?
     };
-    let residency = crate::mincore::residency(&mmap, len)?;
+    let residency: BitVec = crate::mincore::residency(&mmap, len)?;
     sink.send(Event::FileStart {
         path: path.display().to_string(),
         total_pages: pages_in_range,
@@ -166,7 +167,7 @@ pub fn process_file<O: Op>(
     let need_bitmap = events.is_some() && !discovered;
 
     let pages_in_core = if need_bitmap {
-        let residency = crate::mincore::residency(&mmap, len)?;
+        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
         let count = residency.count_ones() as i64;
         if let Some(sink) = events {
             sink.send(Event::FileStart {
@@ -179,7 +180,7 @@ pub fn process_file<O: Op>(
     } else if *crate::cachestat::SUPPORTED {
         cachestat_count(&file, offset, len as u64)?
     } else {
-        let residency = crate::mincore::residency(&mmap, len)?;
+        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
         residency.count_ones() as i64
     };
 
@@ -199,7 +200,7 @@ pub fn process_file<O: Op>(
     let output = op.execute(&ctx)?;
 
     let final_in_core = if events.is_some() {
-        let residency = crate::mincore::residency(&mmap, len)?;
+        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
         let count = residency.count_ones() as i64;
 
         if let Some(sink) = events {
@@ -214,7 +215,7 @@ pub fn process_file<O: Op>(
     } else if *crate::cachestat::SUPPORTED {
         cachestat_count(&file, offset, len as u64)?
     } else {
-        let residency = crate::mincore::residency(&mmap, len)?;
+        let residency: BitVec = crate::mincore::residency(&mmap, len)?;
         residency.count_ones() as i64
     };
 
@@ -312,7 +313,7 @@ mod tests {
 
         let file = File::open(f.path()).unwrap();
         let mmap_check = unsafe { memmap2::MmapOptions::new().len(size).map(&file).unwrap() };
-        let residency = crate::mincore::residency(&mmap_check, size).unwrap();
+        let residency: BitVec = crate::mincore::residency(&mmap_check, size).unwrap();
         assert!(residency.all(), "expected all pages resident after touch");
     }
 
