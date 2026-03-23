@@ -4,8 +4,7 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
     systems.url = "github:nix-systems/default";
-    rust-flake.url = "github:juspay/rust-flake";
-    rust-flake.inputs.nixpkgs.follows = "nixpkgs";
+    crane.url = "github:ipetkov/crane";
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.flake = false;
     treefmt-nix.url = "github:numtide/treefmt-nix";

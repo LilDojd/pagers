@@ -5,11 +5,9 @@
       devShells.default = pkgs.mkShell {
         name = "pagers-shell";
         inputsFrom = [
-          self'.devShells.rust
-          config.pre-commit.devShell # See ./nix/modules/pre-commit.nix
+          self'.packages.pagers
+          config.pre-commit.devShell
         ];
-        buildInputs = [ pkgs.openssl ];
-        nativeBuildInputs = [ pkgs.pkg-config ];
         packages = with pkgs; [
           vmtouch
           just
@@ -24,6 +22,7 @@
           samply
           perf
           clang
+          git-cliff
         ];
       };
     };
