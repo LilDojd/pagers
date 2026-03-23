@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use pagers_core::output::Summary;
-use pagers_core::{crawl, mmap, ops};
+use pagers_core::{crawl, ops};
 
 use crate::Error;
 use crate::cli::CommonArgs;
@@ -51,7 +51,7 @@ where
     O::Output: 'static,
 {
     let (offset, max_len) = if let Some(ref range) = common.range {
-        let page_size = mmap::page_size() as u64;
+        let page_size = *pagers_core::pagesize::PAGE_SIZE as u64;
         let aligned = (range.start_b / page_size) * page_size;
         let max_len = match range.end_b {
             Some(end) if end <= aligned => return Err(Error::RangeOrder),
@@ -98,14 +98,8 @@ where
         })
     });
 
-    let outputs = crawl::crawl_and_process(
-        &common.paths,
-        &crawl_config,
-        op,
-        &range,
-        &stats,
-        events_tx,
-    );
+    let outputs =
+        crawl::crawl_and_process(&common.paths, &crawl_config, op, &range, &stats, events_tx);
 
     if let Some(handle) = tui_handle {
         handle.join().expect("TUI thread panicked");

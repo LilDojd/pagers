@@ -15,7 +15,6 @@ use memmap2::{Mmap, MmapOptions};
 
 use crate::Error;
 use crate::events::{Event, EventSink};
-use crate::mmap;
 
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
@@ -102,7 +101,7 @@ pub fn send_file_start(path: &Path, range: &FileRange, sink: &EventSink) -> crat
         return Ok(());
     };
 
-    let pages_in_range = len.div_ceil(mmap::page_size());
+    let pages_in_range = len.div_ceil(*crate::pagesize::PAGE_SIZE);
     let mmap = unsafe {
         MmapOptions::new()
             .offset(offset)
@@ -110,7 +109,7 @@ pub fn send_file_start(path: &Path, range: &FileRange, sink: &EventSink) -> crat
             .map(&file)
             .map_err(io_err)?
     };
-    let residency = mmap::mincore_residency(&mmap, len)?;
+    let residency = crate::mincore::residency(&mmap, len)?;
     sink.send(Event::FileStart {
         path: path.display().to_string(),
         total_pages: pages_in_range,
@@ -119,7 +118,6 @@ pub fn send_file_start(path: &Path, range: &FileRange, sink: &EventSink) -> crat
     Ok(())
 }
 
-/// Cached page count via cachestat(2).
 #[cfg(target_os = "linux")]
 fn cachestat_count(file: &File, offset: u64, len: u64) -> crate::Result<i64> {
     use std::os::unix::io::AsFd;
@@ -152,7 +150,7 @@ pub fn process_file<O: Op>(
             file_len,
         })?;
 
-    let pages = len.div_ceil(mmap::page_size());
+    let pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
 
     stats.total_pages.fetch_add(pages as i64, Ordering::Relaxed);
     stats.total_files.fetch_add(1, Ordering::Relaxed);
@@ -165,15 +163,10 @@ pub fn process_file<O: Op>(
             .map_err(io_err)?
     });
 
-    #[cfg(target_os = "linux")]
-    let has_cachestat = crate::cachestat::supported();
-    #[cfg(not(target_os = "linux"))]
-    let has_cachestat = false;
-
     let need_bitmap = events.is_some() && !discovered;
 
     let pages_in_core = if need_bitmap {
-        let residency = mmap::mincore_residency(&mmap, len)?;
+        let residency = crate::mincore::residency(&mmap, len)?;
         let count = residency.count_ones() as i64;
         if let Some(sink) = events {
             sink.send(Event::FileStart {
@@ -183,10 +176,10 @@ pub fn process_file<O: Op>(
             });
         }
         count
-    } else if has_cachestat {
+    } else if *crate::cachestat::SUPPORTED {
         cachestat_count(&file, offset, len as u64)?
     } else {
-        let residency = mmap::mincore_residency(&mmap, len)?;
+        let residency = crate::mincore::residency(&mmap, len)?;
         residency.count_ones() as i64
     };
 
@@ -206,7 +199,7 @@ pub fn process_file<O: Op>(
     let output = op.execute(&ctx)?;
 
     let final_in_core = if events.is_some() {
-        let residency = mmap::mincore_residency(&mmap, len)?;
+        let residency = crate::mincore::residency(&mmap, len)?;
         let count = residency.count_ones() as i64;
 
         if let Some(sink) = events {
@@ -218,10 +211,10 @@ pub fn process_file<O: Op>(
             });
         }
         count
-    } else if has_cachestat {
+    } else if *crate::cachestat::SUPPORTED {
         cachestat_count(&file, offset, len as u64)?
     } else {
-        let residency = mmap::mincore_residency(&mmap, len)?;
+        let residency = crate::mincore::residency(&mmap, len)?;
         residency.count_ones() as i64
     };
 
@@ -238,7 +231,7 @@ mod tests {
     use std::io::Write;
 
     fn create_temp_file(pages: usize) -> (tempfile::NamedTempFile, usize) {
-        let page_size = mmap::page_size();
+        let page_size = *crate::pagesize::PAGE_SIZE;
         let size = page_size * pages;
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(&vec![0xABu8; size]).unwrap();
@@ -293,7 +286,7 @@ mod tests {
     #[test]
     fn test_process_file_with_max_len() {
         let (f, _) = create_temp_file(8);
-        let page_size = mmap::page_size();
+        let page_size = *crate::pagesize::PAGE_SIZE;
         let stats = Stats::new();
         let range = FileRange {
             offset: 0,
@@ -319,7 +312,7 @@ mod tests {
 
         let file = File::open(f.path()).unwrap();
         let mmap_check = unsafe { memmap2::MmapOptions::new().len(size).map(&file).unwrap() };
-        let residency = mmap::mincore_residency(&mmap_check, size).unwrap();
+        let residency = crate::mincore::residency(&mmap_check, size).unwrap();
         assert!(residency.all(), "expected all pages resident after touch");
     }
 

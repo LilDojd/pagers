@@ -1,5 +1,6 @@
+use memmap2::Advice;
+
 use super::{FileContext, Op};
-use crate::mmap;
 
 pub struct Touch;
 
@@ -15,7 +16,7 @@ impl Op for Touch {
             return Ok(());
         }
 
-        let page_size = mmap::page_size();
+        let page_size = *crate::pagesize::PAGE_SIZE;
         let total_pages = len.div_ceil(page_size);
 
         std::thread::scope(|s| {
@@ -66,5 +67,7 @@ fn initiate_readahead(ctx: &FileContext) {
         );
     }
 
-    let _ = mmap::advise_willneed(&ctx.mmap, ctx.offset as usize, ctx.len);
+    let _ = ctx
+        .mmap
+        .advise_range(Advice::WillNeed, ctx.offset as usize, ctx.len);
 }

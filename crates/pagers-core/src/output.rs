@@ -1,6 +1,5 @@
 use std::sync::atomic::Ordering;
 
-use crate::mmap;
 use crate::ops::Stats;
 
 pub fn pretty_size(bytes: i64) -> String {
@@ -36,7 +35,7 @@ pub struct Summary {
 
 impl Summary {
     pub fn from_stats(stats: &Stats, elapsed: f64) -> Self {
-        let page_size = mmap::page_size() as i64;
+        let page_size = *crate::pagesize::PAGE_SIZE as i64;
         let total_pages = stats.total_pages.load(Ordering::Relaxed);
         let pages_in_core = stats.total_pages_in_core.load(Ordering::Relaxed);
         let total_files = stats.total_files.load(Ordering::Relaxed);

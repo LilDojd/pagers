@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bitvec = { workspace = true }
 dashmap = "6"
+lazy_static = "1"
 ignore = "0.4"
 libc = "0.2"
 memmap2 = "0.9"

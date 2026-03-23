@@ -7,7 +7,6 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
-use pagers_core::mmap;
 use pagers_core::ops::Stats;
 use pagers_core::output::pretty_size;
 
@@ -22,7 +21,7 @@ pub(crate) fn render_summary(
     area: Rect,
     buf: &mut Buffer,
 ) {
-    let page_size = mmap::page_size() as i64;
+    let page_size = *pagers_core::pagesize::PAGE_SIZE as i64;
     let total_pages = stats.total_pages.load(Ordering::Relaxed);
     let pages_in_core = stats.total_pages_in_core.load(Ordering::Relaxed);
     let total_files = stats.total_files.load(Ordering::Relaxed);

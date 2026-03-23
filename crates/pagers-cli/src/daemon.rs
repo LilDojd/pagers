@@ -2,7 +2,7 @@ use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use pagers_core::{mmap, ops, output};
+use pagers_core::{ops, output};
 
 use crate::Error;
 use crate::cli::{LockInner, WithCommon};
@@ -108,7 +108,7 @@ fn hold(stats: &ops::Stats, inner: &LockInner, term: &AtomicBool, notify_fd: Opt
         ::tracing::warn!("pidfile: {e}");
     }
 
-    let page_size = mmap::page_size() as i64;
+    let page_size = *pagers_core::pagesize::PAGE_SIZE as i64;
     let total = stats.total_pages.load(std::sync::atomic::Ordering::Relaxed);
     ::tracing::info!(
         "LOCKED {} pages ({})",
