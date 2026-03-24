@@ -3,6 +3,12 @@ use std::ops::{Index, IndexMut, Range};
 use memmap2::Mmap;
 use nix::errno::Errno;
 
+#[cfg(target_os = "macos")]
+type MincoreType = libc::c_char;
+
+#[cfg(not(target_os = "macos"))]
+type MincoreType = libc::c_uchar;
+
 pub fn residency<PM: PageMap>(mmap: &Mmap, len: usize) -> nix::Result<PM> {
     let page_size = *crate::pagesize::PAGE_SIZE;
     let vec_len = len.div_ceil(page_size);
@@ -16,7 +22,7 @@ pub fn residency<PM: PageMap>(mmap: &Mmap, len: usize) -> nix::Result<PM> {
         if libc::mincore(
             mmap.as_ptr() as *mut libc::c_void,
             len as libc::size_t,
-            vec_out.as_mut_ptr() as *mut libc::c_char,
+            vec_out.as_mut_ptr().cast::<MincoreType>(),
         ) != 0
         {
             return Err(Errno::last());
