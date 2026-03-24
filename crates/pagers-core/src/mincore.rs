@@ -3,11 +3,6 @@ use std::ops::{Index, IndexMut, Range};
 use memmap2::Mmap;
 use nix::errno::Errno;
 
-#[cfg(target_os = "linux")]
-type MincoreMutVecRef = *mut u8;
-#[cfg(target_os = "macos")]
-type MincoreMutVecRef = *mut i8;
-
 pub fn residency<PM: PageMap>(mmap: &Mmap, len: usize) -> nix::Result<PM> {
     let page_size = *crate::pagesize::PAGE_SIZE;
     let vec_len = len.div_ceil(page_size);
@@ -20,8 +15,8 @@ pub fn residency<PM: PageMap>(mmap: &Mmap, len: usize) -> nix::Result<PM> {
         // We have allocated the underlying buffer by using with_capacity.
         if libc::mincore(
             mmap.as_ptr() as *mut libc::c_void,
-            len,
-            vec_out.as_mut_ptr() as MincoreMutVecRef,
+            len as libc::size_t,
+            vec_out.as_mut_ptr() as *mut libc::c_char,
         ) != 0
         {
             return Err(Errno::last());

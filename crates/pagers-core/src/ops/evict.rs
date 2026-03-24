@@ -16,8 +16,8 @@ impl Op for Evict {
             use std::os::unix::io::AsFd;
             nix::fcntl::posix_fadvise(
                 ctx.file.as_fd(),
-                ctx.offset as i64,
-                ctx.len as i64,
+                ctx.offset as libc::off_t,
+                ctx.len as libc::off_t,
                 nix::fcntl::PosixFadviseAdvice::POSIX_FADV_DONTNEED,
             )?;
         }

@@ -45,8 +45,8 @@ impl Op for Touch {
 }
 
 fn initiate_readahead(ctx: &FileContext) {
-    let offset = ctx.offset as i64;
-    let len = ctx.len as i64;
+    let offset = ctx.offset as libc::off_t;
+    let len = ctx.len as libc::off_t;
 
     #[cfg(target_os = "linux")]
     {

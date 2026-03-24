@@ -33,6 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Prepare ghcr repo
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        id: repo
+
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: DeterminateSystems/flakehub-cache-action@v3
 
@@ -62,7 +66,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           nix run .#${{ matrix.nix-package }}.copyTo -- \
-            docker://ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.value }} \
+            docker://${{ steps.repo.outputs.image }}:${{ steps.tag.outputs.value }} \
             --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}"
 
       - name: Push to Docker Hub
@@ -76,7 +80,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.value }}
+          image: ${{ steps.repo.outputs.image }}:${{ steps.tag.outputs.value }}
 
   manifest:
     name: Create multi-arch manifest
@@ -112,7 +116,7 @@ jobs:
 
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "ghcr=ghcr.io/${{ github.repository }}" >> "$GITHUB_OUTPUT"
+          echo "ghcr=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
           echo "docker=${{ secrets.DOCKER_HUB_USERNAME }}/pagers" >> "$GITHUB_OUTPUT"
 
       - name: Create and push manifests
