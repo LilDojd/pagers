@@ -22,20 +22,14 @@ fn capitalize(s: &str) -> String {
 
 fn print_kv(s: &Summary, label: &str) {
     let cap = capitalize(label);
-    println!(
-        "Files={} Directories={} \
-         {cap}Pages={} TotalPages={} \
-         {cap}Size={} TotalSize={} \
-         {cap}Percent={:.3} Elapsed={:.5}",
-        s.total_files,
-        s.total_dirs,
-        s.pages_in_core,
-        s.total_pages,
-        s.in_core_size,
-        s.total_size,
-        s.pct,
-        s.elapsed,
-    );
+    println!("Files={}", s.total_files);
+    println!("Directories={}", s.total_dirs);
+    println!("{cap}Pages={}", s.pages_in_core);
+    println!("TotalPages={}", s.total_pages);
+    println!("{cap}Size={}", s.in_core_size);
+    println!("TotalSize={}", s.total_size);
+    println!("{cap}Percent={:.3}", s.pct);
+    println!("Elapsed={:.5}", s.elapsed);
 }
 
 fn print_json(s: &Summary, label: &str) {

@@ -234,7 +234,7 @@ fn collect_dir_entries(
     }
 }
 
-fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>> {
+pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>> {
     use std::os::unix::ffi::OsStrExt;
 
     let reader: Box<dyn BufRead> = if path == Path::new("-") {

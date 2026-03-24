@@ -72,6 +72,22 @@ where
 
     let range = ops::FileRange { offset, max_len };
 
+    // When batch source is stdin, drain it before starting the TUI so that
+    // crossterm's raw-mode stdin reader doesn't race with batch path reading.
+    let stdin_is_batch = common
+        .batch
+        .as_deref()
+        .is_some_and(|p| p == std::path::Path::new("-"));
+    let mut extra_paths = common.paths.clone();
+    let batch = if stdin_is_batch {
+        let stdin_paths = crawl::read_batch_paths(std::path::Path::new("-"), common.nul_delim)
+            .map_err(pagers_core::Error::from)?;
+        extra_paths.extend(stdin_paths);
+        None
+    } else {
+        common.batch.clone()
+    };
+
     let use_tui = tui && !common.verbosity.is_silent() && std::io::stdout().is_terminal();
     let (events_tx, events_rx) = if use_tui {
         let (tx, rx) = std::sync::mpsc::channel::<pagers_core::events::Event<PM>>();
@@ -87,7 +103,7 @@ where
         ignore_patterns: common.filter.ignore.clone(),
         filter_patterns: common.filter.filter.clone(),
         max_file_size: common.max_file_size,
-        batch: common.batch.clone(),
+        batch,
         nul_delim: common.nul_delim,
     };
 
@@ -106,7 +122,7 @@ where
     });
 
     let outputs =
-        crawl::crawl_and_process(&common.paths, &crawl_config, op, &range, &stats, events_tx);
+        crawl::crawl_and_process(&extra_paths, &crawl_config, op, &range, &stats, events_tx);
 
     if let Some(handle) = tui_handle {
         handle.join().expect("TUI thread panicked");

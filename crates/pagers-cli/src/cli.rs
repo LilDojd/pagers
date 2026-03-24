@@ -106,7 +106,7 @@ pub struct CommonArgs {
     pub batch: Option<PathBuf>,
 
     /// NUL-delimited paths in batch mode
-    #[arg(short = '0')]
+    #[arg(short = '0', requires = "batch")]
     pub nul_delim: bool,
 
     /// Output format
