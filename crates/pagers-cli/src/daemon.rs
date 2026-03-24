@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -7,7 +8,7 @@ use pagers_core::{ops, output};
 
 use crate::Error;
 use crate::cli::{LockInner, WithCommon};
-use crate::runop::{Run, run_op};
+use crate::runop::{Run, run_cli, run_tui};
 
 pub(crate) struct DaemonCmd<'a, O, PM: PageMap = DefaultPageMap> {
     op: O,
@@ -16,7 +17,7 @@ pub(crate) struct DaemonCmd<'a, O, PM: PageMap = DefaultPageMap> {
     _phantom: std::marker::PhantomData<PM>,
 }
 
-impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> DaemonCmd<'a, O, PM>
+impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> DaemonCmd<'a, O, PM>
 where
     O::Output: 'static,
 {
@@ -30,26 +31,31 @@ where
     }
 }
 
-impl<O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> Run for DaemonCmd<'_, O, PM>
+impl<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> Run for DaemonCmd<'_, O, PM>
 where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        if self.args.inner.daemon {
-            match go_daemon(self.args.inner.wait)? {
+        match self.args.inner.daemon {
+            true => match go_daemon(self.args.inner.wait)? {
                 ForkOutcome::Parent => Ok(()),
                 ForkOutcome::Child(notify_fd) => {
-                    let (stats, _locks, _) =
-                        run_op::<O, PM>(&self.op, self.args.common(), false, self.term)?;
+                    let (stats, _locks, _) = run_cli::<O, PM>(&self.op, self.args.common())?;
                     hold(&stats, &self.args.inner, self.term, notify_fd);
                     Ok(())
                 }
+            },
+            false => {
+                let use_tui =
+                    !self.args.common().verbosity.is_silent() && std::io::stdout().is_terminal();
+                let (stats, _locks, _) = if use_tui {
+                    run_tui::<O, PM>(&self.op, self.args.common(), self.term)?
+                } else {
+                    run_cli::<O, PM>(&self.op, self.args.common())?
+                };
+                hold(&stats, &self.args.inner, self.term, None);
+                Ok(())
             }
-        } else {
-            let (stats, _locks, _) =
-                run_op::<O, PM>(&self.op, self.args.common(), true, self.term)?;
-            hold(&stats, &self.args.inner, self.term, None);
-            Ok(())
         }
     }
 }
@@ -118,7 +124,7 @@ fn hold(stats: &ops::Stats, inner: &LockInner, term: &AtomicBool, notify_fd: Opt
         ::tracing::warn!("pidfile: {e}");
     }
 
-    let page_size = *pagers_core::pagesize::PAGE_SIZE as i64;
+    let page_size = *pagers_core::pagesize::PAGE_SIZE;
     let total = stats.total_pages.load(std::sync::atomic::Ordering::Relaxed);
     ::tracing::info!(
         "LOCKED {} pages ({})",

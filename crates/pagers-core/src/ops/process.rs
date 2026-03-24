@@ -4,9 +4,138 @@ use std::sync::Arc;
 
 use memmap2::MmapOptions;
 
-use super::{FileContext, FileInfo, FileRange, FileResult, Op};
+use super::{FileInfo, FileRange};
 use crate::Error;
 use crate::mincore::PageMap;
+
+pub trait FileProcessed {
+    type Output;
+    fn into_output(self) -> Self::Output;
+    fn output_ref(&self) -> &Self::Output;
+    fn total_pages(&self) -> usize;
+    fn pages_in_core_before(&self) -> Option<usize> {
+        None
+    }
+    fn pages_in_core_after(&self) -> usize;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FullResult<O, PM> {
+    pub output: O,
+    pub total_pages: usize,
+    pub pages_in_core_before: usize,
+    pub pages_in_core_after: usize,
+    pub residency_before: Option<PM>,
+    pub residency_after: Option<PM>,
+}
+
+impl<O, PM> FileProcessed for FullResult<O, PM> {
+    type Output = O;
+    fn into_output(self) -> O {
+        self.output
+    }
+    fn output_ref(&self) -> &O {
+        &self.output
+    }
+    fn total_pages(&self) -> usize {
+        self.total_pages
+    }
+    fn pages_in_core_before(&self) -> Option<usize> {
+        Some(self.pages_in_core_before)
+    }
+    fn pages_in_core_after(&self) -> usize {
+        self.pages_in_core_after
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CountsResult<O> {
+    pub output: O,
+    pub total_pages: usize,
+    pub pages_in_core_after: usize,
+}
+
+impl<O> FileProcessed for CountsResult<O> {
+    type Output = O;
+    fn into_output(self) -> O {
+        self.output
+    }
+    fn output_ref(&self) -> &O {
+        &self.output
+    }
+    fn total_pages(&self) -> usize {
+        self.total_pages
+    }
+    fn pages_in_core_after(&self) -> usize {
+        self.pages_in_core_after
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkipResult<O> {
+    pub output: O,
+    pub total_pages: usize,
+}
+
+impl<O> FileProcessed for SkipResult<O> {
+    type Output = O;
+    fn into_output(self) -> O {
+        self.output
+    }
+    fn output_ref(&self) -> &O {
+        &self.output
+    }
+    fn total_pages(&self) -> usize {
+        self.total_pages
+    }
+    fn pages_in_core_after(&self) -> usize {
+        0
+    }
+}
+
+pub(crate) struct PreparedFile {
+    pub file: File,
+    pub offset: u64,
+    pub len: usize,
+    pub total_pages: usize,
+    pub mmap: Arc<memmap2::Mmap>,
+}
+
+pub(crate) fn prepare_file(path: &Path, range: &FileRange) -> crate::Result<Option<PreparedFile>> {
+    let io_err = |e| Error::io(path.display().to_string(), e);
+
+    let file = File::open(path).map_err(io_err)?;
+    let file_len = file.metadata().map_err(io_err)?.len();
+
+    if file_len == 0 {
+        return Ok(None);
+    }
+
+    let (offset, len) =
+        effective_range(file_len, range).ok_or_else(|| Error::OffsetBeyondFile {
+            path: path.to_path_buf(),
+            offset: range.offset,
+            file_len,
+        })?;
+
+    let total_pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
+
+    let mmap = Arc::new(unsafe {
+        MmapOptions::new()
+            .offset(offset)
+            .len(len)
+            .map(&file)
+            .map_err(io_err)?
+    });
+
+    Ok(Some(PreparedFile {
+        file,
+        offset,
+        len,
+        total_pages,
+        mmap,
+    }))
+}
 
 fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
     if file_len == 0 {
@@ -21,26 +150,6 @@ fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
         _ => (file_len - offset) as usize,
     };
     Some((offset, len))
-}
-
-#[allow(unused_variables)]
-fn page_count<PM: PageMap>(
-    file: &File,
-    mmap: &memmap2::Mmap,
-    offset: u64,
-    len: usize,
-    need_residency: bool,
-) -> crate::Result<(i64, Option<PM>)> {
-    #[cfg(target_os = "linux")]
-    if !need_residency && *crate::cachestat::SUPPORTED {
-        use std::os::unix::io::AsFd;
-        let count = crate::cachestat::cached_pages(file.as_fd(), offset, len as u64)? as i64;
-        return Ok((count, None));
-    }
-
-    let residency: PM = crate::mincore::residency(mmap, len)?;
-    let count = residency.count_filled() as i64;
-    Ok((count, Some(residency)))
 }
 
 pub fn file_info<PM: PageMap>(
@@ -71,83 +180,10 @@ pub fn file_info<PM: PageMap>(
     }))
 }
 
-pub fn process_file<O: Op, PM: PageMap>(
-    op: &O,
-    path: &Path,
-    range: &FileRange,
-    with_residency: bool,
-    on_progress: Option<&(dyn Fn(usize) + Sync)>,
-) -> crate::Result<Option<FileResult<O::Output, PM>>> {
-    let io_err = |e| Error::io(path.display().to_string(), e);
-
-    let file = File::open(path).map_err(io_err)?;
-    let file_len = file.metadata().map_err(io_err)?.len();
-
-    if file_len == 0 {
-        return Ok(None);
-    }
-
-    let (offset, len) =
-        effective_range(file_len, range).ok_or_else(|| Error::OffsetBeyondFile {
-            path: path.to_path_buf(),
-            offset: range.offset,
-            file_len,
-        })?;
-
-    let total_pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
-
-    let mmap = Arc::new(unsafe {
-        MmapOptions::new()
-            .offset(offset)
-            .len(len)
-            .map(&file)
-            .map_err(io_err)?
-    });
-
-    let (pages_in_core_before, residency_before) = if with_residency {
-        page_count::<PM>(&file, &mmap, offset, len, true)?
-    } else {
-        (0, None)
-    };
-
-    let ctx = FileContext {
-        file: &file,
-        path,
-        mmap: Arc::clone(&mmap),
-        offset,
-        len,
-        on_progress,
-    };
-
-    let output = op.execute(&ctx)?;
-
-    let (pages_in_core_after, residency_before, residency_after) =
-        match (O::MUTATES_RESIDENCY, with_residency) {
-            (false, true) => (pages_in_core_before, None, residency_before),
-            (false, false) => {
-                let (count, res) = page_count::<PM>(&file, &mmap, offset, len, false)?;
-                (count, None, res)
-            }
-            (true, true) => {
-                let (count, res) = page_count::<PM>(&file, &mmap, offset, len, true)?;
-                (count, residency_before, res)
-            }
-            (true, false) => (0, None, None),
-        };
-
-    Ok(Some(FileResult {
-        output,
-        total_pages,
-        pages_in_core_before,
-        pages_in_core_after,
-        residency_before,
-        residency_after,
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::mincore::PageMapSlice as _;
+    use crate::mode;
 
     use super::*;
     use std::io::Write;
@@ -169,8 +205,6 @@ mod tests {
             mod $mod {
                 use super::*;
 
-                type R<O> = FileResult<O, $t>;
-
                 #[test]
                 fn query_counts_pages() {
                     let (f, _) = create_temp_file(4);
@@ -178,7 +212,7 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, false, None)
+                    let result = mode::counts_process_file::<Query, $t>(&Query, f.path(), &range)
                         .unwrap()
                         .unwrap();
                     assert_eq!(result.total_pages, 4);
@@ -191,8 +225,8 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: Option<R<()>> =
-                        process_file(&Query, f.path(), &range, false, None).unwrap();
+                    let result: Option<CountsResult<()>> =
+                        mode::counts_process_file::<Query, $t>(&Query, f.path(), &range).unwrap();
                     assert!(result.is_none());
                 }
 
@@ -203,8 +237,8 @@ mod tests {
                         offset: 1_000_000,
                         max_len: None,
                     };
-                    let result: crate::Result<Option<R<()>>> =
-                        process_file(&Query, f.path(), &range, false, None);
+                    let result: crate::Result<Option<CountsResult<()>>> =
+                        mode::counts_process_file::<Query, $t>(&Query, f.path(), &range);
                     assert!(result.is_err());
                     let err = result.unwrap_err();
                     assert!(
@@ -221,7 +255,7 @@ mod tests {
                         offset: 0,
                         max_len: Some((page_size * 2) as u64),
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, false, None)
+                    let result = mode::counts_process_file::<Query, $t>(&Query, f.path(), &range)
                         .unwrap()
                         .unwrap();
                     assert_eq!(result.total_pages, 2);
@@ -235,10 +269,10 @@ mod tests {
                         max_len: None,
                     };
 
-                    process_file::<_, $t>(&Evict, f.path(), &range, false, None).unwrap();
-                    process_file::<_, $t>(&Touch, f.path(), &range, false, None).unwrap();
+                    mode::counts_process_file::<Evict, $t>(&Evict, f.path(), &range).unwrap();
+                    mode::counts_process_file::<Touch, $t>(&Touch, f.path(), &range).unwrap();
 
-                    let file = File::open(f.path()).unwrap();
+                    let file = std::fs::File::open(f.path()).unwrap();
                     let mmap_check =
                         unsafe { memmap2::MmapOptions::new().len(size).map(&file).unwrap() };
                     let residency: $t = crate::mincore::residency(&mmap_check, size).unwrap();
@@ -255,76 +289,53 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: crate::Result<Option<R<()>>> =
-                        process_file(&Evict, f.path(), &range, false, None);
+                    let result: crate::Result<Option<CountsResult<()>>> =
+                        mode::counts_process_file::<Evict, $t>(&Evict, f.path(), &range);
                     assert!(result.is_ok());
                 }
 
                 #[test]
-                fn with_residency() {
+                fn full_residency() {
                     let (f, _) = create_temp_file(4);
                     let range = FileRange {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, true, None)
-                        .unwrap()
-                        .unwrap();
-                    // Query moves residency_before into residency_after (no clone)
-                    assert!(result.residency_before.is_none());
+                    let result: FullResult<(), $t> =
+                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None)
+                            .unwrap()
+                            .unwrap();
                     assert!(result.residency_after.is_some());
                     assert_eq!(result.residency_after.unwrap().len(), 4);
                 }
 
                 #[test]
-                fn query_with_residency_reuses_before() {
+                fn query_full_reuses_before() {
                     let (f, _) = create_temp_file(4);
                     let range = FileRange {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: R<()> = process_file(&Query, f.path(), &range, true, None)
-                        .unwrap()
-                        .unwrap();
-                    // Query doesn't mutate residency, so before == after count
+                    let result: FullResult<(), $t> =
+                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None)
+                            .unwrap()
+                            .unwrap();
                     assert_eq!(result.pages_in_core_before, result.pages_in_core_after);
                     assert!(result.residency_before.is_none());
                     assert!(result.residency_after.is_some());
                 }
 
                 #[test]
-                fn evict_without_residency_skips_mincore() {
+                fn counts_without_bitmap() {
                     let (f, _) = create_temp_file(4);
                     let range = FileRange {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: R<()> = process_file(&Evict, f.path(), &range, false, None)
+                    let result = mode::counts_process_file::<Query, $t>(&Query, f.path(), &range)
                         .unwrap()
                         .unwrap();
-                    // Without TUI, mutating ops skip mincore: before=0, after=0
-                    assert_eq!(result.pages_in_core_before, 0);
-                    assert_eq!(result.pages_in_core_after, 0);
-                    assert!(result.residency_before.is_none());
-                    assert!(result.residency_after.is_none());
-                    // total_pages still computed from file size
                     assert_eq!(result.total_pages, 4);
-                }
-
-                #[test]
-                fn without_residency() {
-                    let (f, _) = create_temp_file(4);
-                    let range = FileRange {
-                        offset: 0,
-                        max_len: None,
-                    };
-                    let result: R<()> = process_file(&Query, f.path(), &range, false, None)
-                        .unwrap()
-                        .unwrap();
-                    if *crate::cachestat::SUPPORTED {
-                        assert!(result.residency_before.is_none());
-                        assert!(result.residency_after.is_none());
-                    }
                 }
 
                 #[test]
@@ -333,13 +344,12 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: crate::Result<Option<R<()>>> = process_file(
-                        &Query,
-                        std::path::Path::new("/nonexistent/file.dat"),
-                        &range,
-                        false,
-                        None,
-                    );
+                    let result: crate::Result<Option<CountsResult<()>>> =
+                        mode::counts_process_file::<Query, $t>(
+                            &Query,
+                            std::path::Path::new("/nonexistent/file.dat"),
+                            &range,
+                        );
                     assert!(result.is_err());
                 }
 
@@ -367,7 +377,8 @@ mod tests {
     fn test_stats_default() {
         let stats = Stats::default();
         assert_eq!(stats.total_pages.load(Ordering::Relaxed), 0);
-        assert_eq!(stats.total_pages_in_core.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.initial_pages_in_core.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.action_pages.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_files.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_dirs.load(Ordering::Relaxed), 0);
     }

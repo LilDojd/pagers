@@ -36,7 +36,7 @@ pub(crate) fn par_collect<T: Sync, R: Send>(
             .use_current_thread()
             .build()
             .unwrap();
-        return pool.install(|| items.par_iter().filter_map(|i| f(i)).collect());
+        return pool.install(|| items.par_iter().filter_map(&f).collect());
     }
-    items.iter().filter_map(|i| f(i)).collect()
+    items.iter().filter_map(f).collect()
 }

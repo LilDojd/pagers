@@ -1,3 +1,5 @@
+use crate::mincore::PageMap;
+
 use super::{FileContext, Op};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6,9 +8,20 @@ pub struct Evict;
 
 impl Op for Evict {
     const LABEL: &str = "evicted";
+    const ACTION_SIGN: isize = -1;
     type Output = ();
 
-    fn execute(&self, ctx: &FileContext) -> crate::Result<()> {
+    fn action_pages(
+        _output: &(),
+        total_pages: usize,
+        pages_in_core_before: Option<usize>,
+        pages_in_core_after: usize,
+    ) -> usize {
+        let before = pages_in_core_before.unwrap_or(total_pages);
+        before.saturating_sub(pages_in_core_after)
+    }
+
+    fn execute<PM: PageMap + Sync>(&self, ctx: &FileContext<'_, PM>) -> crate::Result<()> {
         tracing::debug!("Evicting {}", ctx.path.display());
 
         #[cfg(target_os = "linux")]

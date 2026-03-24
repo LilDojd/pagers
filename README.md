@@ -75,7 +75,7 @@ pagers lockall -d /data
 
 # Machine-readable output
 pagers query -o json /data | jq .
-pagers query -o kv /data | grep TouchedPercent
+pagers query -o kv /data | grep TotalResidentPercent
 
 # Process a list of paths from find(1)
 find /srv -name '*.db' -print0 | pagers query -b - -0

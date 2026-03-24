@@ -1,3 +1,5 @@
+use crate::mincore::PageMap;
+
 use super::{FileContext, Op};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,7 +11,7 @@ impl Op for Query {
     const MUTATES_RESIDENCY: bool = false;
     type Output = ();
 
-    fn execute(&self, _ctx: &FileContext) -> crate::Result<()> {
+    fn execute<PM: PageMap + Sync>(&self, _ctx: &FileContext<'_, PM>) -> crate::Result<()> {
         Ok(())
     }
 }

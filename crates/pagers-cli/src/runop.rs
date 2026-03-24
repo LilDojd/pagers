@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use pagers_core::mincore::{DefaultPageMap, PageMap};
+use pagers_core::mode;
 use pagers_core::output::Summary;
 use pagers_core::{crawl, ops};
 
@@ -21,7 +22,7 @@ pub(crate) struct SimpleCmd<'a, O, PM: PageMap = DefaultPageMap> {
     _phantom: std::marker::PhantomData<PM>,
 }
 
-impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> SimpleCmd<'a, O, PM>
+impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> SimpleCmd<'a, O, PM>
 where
     O::Output: 'static,
 {
@@ -35,12 +36,17 @@ where
     }
 }
 
-impl<O: ops::Op + Send + 'static, PM: PageMap + Send + 'static> Run for SimpleCmd<'_, O, PM>
+impl<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> Run for SimpleCmd<'_, O, PM>
 where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        let (stats, _, elapsed) = run_op::<O, PM>(&self.op, self.common, true, self.term)?;
+        let use_tui = !self.common.verbosity.is_silent() && std::io::stdout().is_terminal();
+        let (stats, _, elapsed) = if use_tui {
+            run_tui::<O, PM>(&self.op, self.common, self.term)?
+        } else {
+            run_cli::<O, PM>(&self.op, self.common)?
+        };
         maybe_print_summary::<O>(&stats, elapsed, self.common);
         Ok(())
     }
@@ -48,15 +54,9 @@ where
 
 pub(crate) type RunResult<O> = Result<(Arc<ops::Stats>, Vec<O>, f64), Error>;
 
-pub(crate) fn run_op<O: ops::Op + Send + 'static, PM: PageMap + Send + 'static>(
-    op: &O,
+fn common_setup(
     common: &CommonArgs,
-    tui: bool,
-    term: &Arc<AtomicBool>,
-) -> RunResult<O::Output>
-where
-    O::Output: 'static,
-{
+) -> Result<(ops::FileRange, Vec<std::path::PathBuf>, crawl::CrawlConfig), Error> {
     let (offset, max_len) = if let Some(ref range) = common.range {
         let page_size = *pagers_core::pagesize::PAGE_SIZE as u64;
         let aligned = (range.start_b / page_size) * page_size;
@@ -72,8 +72,6 @@ where
 
     let range = ops::FileRange { offset, max_len };
 
-    // When batch source is stdin, drain it before starting the TUI so that
-    // crossterm's raw-mode stdin reader doesn't race with batch path reading.
     let stdin_is_batch = common
         .batch
         .as_deref()
@@ -88,14 +86,6 @@ where
         common.batch.clone()
     };
 
-    let use_tui = tui && !common.verbosity.is_silent() && std::io::stdout().is_terminal();
-    let (events_tx, events_rx) = if use_tui {
-        let (tx, rx) = std::sync::mpsc::channel::<pagers_core::events::Event<PM>>();
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
-
     let crawl_config = crawl::CrawlConfig {
         follow_symlinks: common.follow_symlinks,
         single_filesystem: common.single_filesystem,
@@ -107,26 +97,70 @@ where
         nul_delim: common.nul_delim,
     };
 
+    Ok((range, extra_paths, crawl_config))
+}
+
+pub(crate) fn run_tui<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
+    op: &O,
+    common: &CommonArgs,
+    term: &Arc<AtomicBool>,
+) -> RunResult<O::Output>
+where
+    O::Output: 'static,
+{
+    let (range, extra_paths, crawl_config) = common_setup(common)?;
     let stats = Arc::new(ops::Stats::new());
     let start = Instant::now();
 
-    let tui_handle = events_rx.map(|rx| {
-        let term_clone = Arc::clone(term);
-        let stats_clone = Arc::clone(&stats);
-        let tui_label = O::LABEL.to_string();
-        std::thread::spawn(move || {
-            if let Err(e) = pagers_tui::run(rx, term_clone, stats_clone, &tui_label, start) {
-                ::tracing::error!("TUI error: {e}");
-            }
-        })
+    let (tx, rx) = std::sync::mpsc::channel::<pagers_core::events::Event<PM>>();
+    let display = mode::Tui::new(tx);
+
+    let term_clone = Arc::clone(term);
+    let stats_clone = Arc::clone(&stats);
+    let tui_label = O::LABEL.to_string();
+    let action_sign = O::ACTION_SIGN;
+    let tui_handle = std::thread::spawn(move || {
+        if let Err(e) = pagers_tui::run(rx, term_clone, stats_clone, &tui_label, action_sign, start)
+        {
+            ::tracing::error!("TUI error: {e}");
+        }
     });
 
-    let outputs =
-        crawl::crawl_and_process(&extra_paths, &crawl_config, op, &range, &stats, events_tx);
+    let outputs = crawl::crawl_and_process::<O, PM, _>(
+        &extra_paths,
+        &crawl_config,
+        op,
+        &range,
+        &stats,
+        &display,
+    );
 
-    if let Some(handle) = tui_handle {
-        handle.join().expect("TUI thread panicked");
-    }
+    tui_handle.join().expect("TUI thread panicked");
+
+    let elapsed = start.elapsed().as_secs_f64();
+    Ok((stats, outputs?, elapsed))
+}
+
+pub(crate) fn run_cli<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
+    op: &O,
+    common: &CommonArgs,
+) -> RunResult<O::Output>
+where
+    O::Output: 'static,
+{
+    let (range, extra_paths, crawl_config) = common_setup(common)?;
+    let stats = Arc::new(ops::Stats::new());
+    let start = Instant::now();
+
+    let display = mode::Cli;
+    let outputs = crawl::crawl_and_process::<O, PM, _>(
+        &extra_paths,
+        &crawl_config,
+        op,
+        &range,
+        &stats,
+        &display,
+    );
 
     let elapsed = start.elapsed().as_secs_f64();
     Ok((stats, outputs?, elapsed))
@@ -139,6 +173,8 @@ fn maybe_print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, common: &Co
     if std::io::stdout().is_terminal() {
         return;
     }
-    let summary = Summary::from_stats(stats, elapsed);
-    common.output.print_summary(&summary, O::LABEL);
+    let summary = Summary::from_stats(stats, elapsed, O::ACTION_SIGN);
+    common
+        .output
+        .print_summary(&summary, O::LABEL, O::ACTION_SIGN != 0);
 }

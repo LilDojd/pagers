@@ -38,6 +38,7 @@ pub trait PageMapSlice {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    fn is_set(&self, index: usize) -> bool;
     fn count_filled(&self) -> usize;
     fn fill(&mut self, value: bool);
 }
@@ -70,6 +71,10 @@ impl PageMapSlice for [bool] {
         self.len()
     }
 
+    fn is_set(&self, index: usize) -> bool {
+        self[index]
+    }
+
     fn count_filled(&self) -> usize {
         self.iter().filter(|&&v| v).count()
     }
@@ -82,6 +87,10 @@ impl PageMapSlice for [bool] {
 impl PageMapSlice for Vec<bool> {
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn is_set(&self, index: usize) -> bool {
+        self[index]
     }
 
     fn count_filled(&self) -> usize {
@@ -113,6 +122,10 @@ mod bitvec_impl {
             self.len()
         }
 
+        fn is_set(&self, index: usize) -> bool {
+            self[index]
+        }
+
         fn count_filled(&self) -> usize {
             self.count_ones()
         }
@@ -125,6 +138,10 @@ mod bitvec_impl {
     impl PageMapSlice for BitVec {
         fn len(&self) -> usize {
             self.len()
+        }
+
+        fn is_set(&self, index: usize) -> bool {
+            self[index]
         }
 
         fn count_filled(&self) -> usize {

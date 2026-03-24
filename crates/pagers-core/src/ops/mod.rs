@@ -8,41 +8,55 @@ mod touch;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
+use std::sync::atomic::AtomicUsize;
 
 use memmap2::Mmap;
 
-use crate::mincore::DefaultPageMap;
+use crate::mincore::{DefaultPageMap, PageMap};
 
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
 pub use lockall::Lockall;
-pub use process::{file_info, process_file};
+pub(crate) use process::prepare_file;
+pub use process::{CountsResult, FileProcessed, FullResult, SkipResult, file_info};
 pub use query::Query;
 pub use touch::Touch;
 
 pub trait Op: Sync {
     const LABEL: &str;
     const MUTATES_RESIDENCY: bool = true;
+    /// +1 for ops that add pages to cache (touch/lock), -1 for evict, 0 for query.
+    const ACTION_SIGN: isize = 0;
 
     type Output: Send;
-    fn execute(&self, ctx: &FileContext) -> crate::Result<Self::Output>;
+    fn execute<PM: PageMap + Sync>(&self, ctx: &FileContext<'_, PM>)
+    -> crate::Result<Self::Output>;
 
     fn finish(&self) -> crate::Result<()> {
         Ok(())
     }
+
+    fn action_pages(
+        _output: &Self::Output,
+        _total_pages: usize,
+        _pages_in_core_before: Option<usize>,
+        _pages_in_core_after: usize,
+    ) -> usize {
+        0
+    }
 }
 
-pub struct FileContext<'a> {
+pub struct FileContext<'a, PM: PageMap = DefaultPageMap> {
     pub file: &'a File,
     pub path: &'a Path,
     pub mmap: Arc<Mmap>,
     pub offset: u64,
     pub len: usize,
-    pub on_progress: Option<&'a (dyn Fn(usize) + Sync)>,
+    pub on_progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
+    pub residency: Option<&'a PM>,
 }
 
-impl std::fmt::Debug for FileContext<'_> {
+impl<PM: PageMap> std::fmt::Debug for FileContext<'_, PM> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileContext")
             .field("path", &self.path)
@@ -66,23 +80,13 @@ pub struct FileInfo<PM = DefaultPageMap> {
     pub residency: PM,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct FileResult<O, PM = DefaultPageMap> {
-    pub output: O,
-    pub total_pages: usize,
-    pub pages_in_core_before: i64,
-    pub pages_in_core_after: i64,
-    pub residency_before: Option<PM>,
-    pub residency_after: Option<PM>,
-}
-
 #[derive(Debug)]
 pub struct Stats {
-    pub total_pages: AtomicI64,
-    pub total_pages_in_core: AtomicI64,
-    pub total_files: AtomicI64,
-    pub total_dirs: AtomicI64,
+    pub total_pages: AtomicUsize,
+    pub initial_pages_in_core: AtomicUsize,
+    pub action_pages: AtomicUsize,
+    pub total_files: AtomicUsize,
+    pub total_dirs: AtomicUsize,
 }
 
 impl Default for Stats {
@@ -94,10 +98,11 @@ impl Default for Stats {
 impl Stats {
     pub fn new() -> Self {
         Self {
-            total_pages: AtomicI64::new(0),
-            total_pages_in_core: AtomicI64::new(0),
-            total_files: AtomicI64::new(0),
-            total_dirs: AtomicI64::new(0),
+            total_pages: AtomicUsize::new(0),
+            initial_pages_in_core: AtomicUsize::new(0),
+            action_pages: AtomicUsize::new(0),
+            total_files: AtomicUsize::new(0),
+            total_dirs: AtomicUsize::new(0),
         }
     }
 }

@@ -15,6 +15,7 @@ pub(crate) fn render_viewport<PM: PageMap>(
     core_stats: &pagers_core::ops::Stats,
     elapsed: f64,
     label: &str,
+    action_sign: isize,
     area: Rect,
     buf: &mut ratatui::buffer::Buffer,
 ) {
@@ -25,7 +26,7 @@ pub(crate) fn render_viewport<PM: PageMap>(
     ])
     .areas(area);
     render_refs_to_buf(files, max_file_rows, files_area, buf);
-    stats::render_summary(core_stats, elapsed, label, stats_area, buf);
+    stats::render_summary(core_stats, elapsed, label, action_sign, stats_area, buf);
 }
 
 pub(crate) fn render_refs_to_buf<PM: PageMap>(

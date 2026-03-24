@@ -1,13 +1,12 @@
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::Sender;
 
 use ignore::WalkBuilder;
 
-use crate::events::{Event, EventSink};
 use crate::mincore::PageMap;
-use crate::ops::{self, FileRange, Op, Stats};
+use crate::mode::DisplayMode;
+use crate::ops::{FileRange, Op, Stats};
 use crate::par::{InodeSet, SeenInodes as _, par_collect};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,100 +22,22 @@ pub struct CrawlConfig {
     pub nul_delim: bool,
 }
 
-pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
+pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
     op: &O,
     range: &FileRange,
     stats: &Stats,
-    events: Option<Sender<Event<PM>>>,
+    display: &D,
 ) -> crate::Result<Vec<O::Output>> {
     let seen_inodes = InodeSet::default();
     let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
 
-    let sink = events.map(EventSink::new);
-    let sink_ref = sink.as_ref();
-    let need_residency = sink_ref.is_some();
+    let outputs = par_collect(&file_paths, |path| {
+        display.process_one::<O>(op, path, range, stats)
+    });
 
-    let process_one = |path: &PathBuf| -> Option<O::Output> {
-        let path_str = path.display().to_string();
-
-        if let Some(sink) = sink_ref {
-            let full_file = FileRange {
-                offset: 0,
-                max_len: None,
-            };
-            match ops::file_info::<PM>(path, &full_file) {
-                Ok(Some(info)) => sink.send(Event::FileStart {
-                    path: path_str.clone(),
-                    total_pages: info.total_pages,
-                    residency: info.residency,
-                }),
-                Ok(None) => return None,
-                Err(e) => {
-                    tracing::warn!("{}: {e}", path.display());
-                    return None;
-                }
-            }
-        }
-
-        let page_offset = range.offset as usize / *crate::pagesize::PAGE_SIZE;
-        let on_progress;
-        let on_progress_ref = if let Some(sink) = sink_ref {
-            on_progress = move |pages_walked: usize| {
-                sink.send(Event::FileProgress {
-                    path: path_str.clone(),
-                    page_offset,
-                    pages_walked,
-                });
-            };
-            Some(&on_progress as &(dyn Fn(usize) + Sync))
-        } else {
-            None
-        };
-
-        let result =
-            match ops::process_file::<O, PM>(op, path, range, need_residency, on_progress_ref) {
-                Ok(Some(r)) => r,
-                Ok(None) => return None,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    return None;
-                }
-            };
-
-        stats
-            .total_pages
-            .fetch_add(result.total_pages as i64, Ordering::Relaxed);
-        stats.total_files.fetch_add(1, Ordering::Relaxed);
-        stats
-            .total_pages_in_core
-            .fetch_add(result.pages_in_core_after, Ordering::Relaxed);
-
-        if let Some(sink) = sink_ref {
-            let full_file = FileRange {
-                offset: 0,
-                max_len: None,
-            };
-            if let Ok(Some(info)) = ops::file_info::<PM>(path, &full_file) {
-                sink.send(Event::FileDone {
-                    path: path.display().to_string(),
-                    pages_in_core: info.residency.count_filled(),
-                    total_pages: info.total_pages,
-                    residency: info.residency,
-                });
-            }
-        }
-
-        Some(result.output)
-    };
-
-    let outputs = par_collect(&file_paths, process_one);
-
-    if let Some(sink) = sink {
-        sink.send(Event::AllDone);
-    }
-
+    display.finish();
     op.finish()?;
 
     Ok(outputs)

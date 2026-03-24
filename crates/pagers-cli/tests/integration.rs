@@ -6,6 +6,11 @@ fn pagers_bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_pagers"))
 }
 
+fn parse_json(output: &std::process::Output) -> serde_json::Value {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON: {e}\nstdout: {stdout}"))
+}
+
 #[test]
 fn test_query_single_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -220,7 +225,7 @@ fn test_touch_then_query_shows_resident() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("ResidentPercent=100"),
+        stdout.contains("TotalResidentPercent=100"),
         "expected 100% resident, got: {stdout}"
     );
 }
@@ -595,6 +600,169 @@ fn test_batch_empty_lines_skipped() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Files=1"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_touch_reports_nonzero_touched_and_resident() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+
+    let output = pagers_bin()
+        .args(["touch", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    let touched = json["touched_pages"].as_i64().unwrap();
+    let total = json["total_pages"].as_i64().unwrap();
+    let resident = json["total_resident_pages"].as_i64().unwrap();
+    assert!(total > 0);
+    assert!(touched > 0, "touched_pages should be > 0, got: {touched}");
+    assert_eq!(resident, total, "all pages should be resident after touch");
+}
+
+#[test]
+fn test_evict_reports_nonzero_evicted() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+
+    // Touch first
+    let output = pagers_bin()
+        .args(["touch", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Evict
+    let output = pagers_bin()
+        .args(["evict", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    let evicted = json["evicted_pages"].as_i64().unwrap();
+    let total = json["total_pages"].as_i64().unwrap();
+    let resident = json["total_resident_pages"].as_i64().unwrap();
+    assert!(evicted > 0, "evicted_pages should be > 0, got: {evicted}");
+    assert!(
+        resident < total,
+        "resident should be less than total after evict"
+    );
+}
+
+#[test]
+fn test_query_shows_only_resident() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    assert!(json.get("total_resident_pages").is_some());
+    assert!(
+        json.get("touched_pages").is_none(),
+        "query should not have touched_pages"
+    );
+    assert!(
+        json.get("evicted_pages").is_none(),
+        "query should not have evicted_pages"
+    );
+}
+
+#[test]
+fn test_touch_then_evict_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0xABu8; 4096 * 30]).unwrap();
+
+    // Touch
+    let output = pagers_bin()
+        .args(["touch", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    let total = json["total_pages"].as_i64().unwrap();
+    assert_eq!(json["total_resident_pages"].as_i64().unwrap(), total);
+
+    // Query: 100% resident
+    let output = pagers_bin()
+        .args(["query", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    assert_eq!(json["total_resident_pages"].as_i64().unwrap(), total);
+
+    // Evict
+    let output = pagers_bin()
+        .args(["evict", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    assert!(json["evicted_pages"].as_i64().unwrap() > 0);
+
+    // Query: 0% resident
+    let output = pagers_bin()
+        .args(["query", "-o", "json", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    assert_eq!(json["total_resident_pages"].as_i64().unwrap(), 0);
+}
+
+#[test]
+fn test_touch_directory_reports_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..5 {
+        fs::write(
+            dir.path().join(format!("f{i}.dat")),
+            vec![0xABu8; 4096 * 10],
+        )
+        .unwrap();
+    }
+
+    let output = pagers_bin()
+        .args(["touch", "-o", "json", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    assert_eq!(json["files"].as_i64().unwrap(), 5);
+    assert!(json["touched_pages"].as_i64().unwrap() > 0);
+    assert!(json["total_resident_pages"].as_i64().unwrap() > 0);
+}
+
+#[test]
+fn test_touch_kv_has_both_metrics() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
+
+    let output = pagers_bin()
+        .args(["touch", "-o", "kv", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("TouchedPages="), "stdout: {stdout}");
+    assert!(stdout.contains("TotalResidentPages="), "stdout: {stdout}");
+    assert!(
+        !stdout.contains("TouchedPages=0"),
+        "TouchedPages should not be 0, got: {stdout}"
+    );
 }
 
 #[test]

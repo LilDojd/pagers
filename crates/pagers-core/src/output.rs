@@ -2,51 +2,59 @@ use std::sync::atomic::Ordering;
 
 use crate::ops::Stats;
 
-pub fn pretty_size(bytes: i64) -> String {
+pub fn pretty_size(bytes: usize) -> String {
     const KI: f64 = 1024.0;
     const MI: f64 = KI * KI;
     const GI: f64 = KI * MI;
     const TI: f64 = KI * GI;
 
     let b = bytes as f64;
-    if bytes < 1024 {
-        format!("{bytes}")
-    } else if b < MI {
-        format!("{:.1}K", b / KI)
-    } else if b < GI {
-        format!("{:.1}M", b / MI)
-    } else if b < TI {
-        format!("{:.1}G", b / GI)
-    } else {
-        format!("{:.1}T", b / TI)
+    match b {
+        _ if b < KI => format!("{bytes}"),
+        _ if b < MI => format!("{:.1}K", b / KI),
+        _ if b < GI => format!("{:.1}M", b / MI),
+        _ if b < TI => format!("{:.1}G", b / GI),
+        _ => format!("{:.1}T", b / TI),
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Summary {
-    pub total_files: i64,
-    pub total_dirs: i64,
-    pub total_pages: i64,
-    pub pages_in_core: i64,
-    pub total_size: i64,
-    pub in_core_size: i64,
-    pub pct: f64,
+    pub total_files: usize,
+    pub total_dirs: usize,
+    pub total_pages: usize,
+    pub total_resident_pages: usize,
+    pub action_pages: usize,
+    pub total_size: usize,
+    pub resident_size: usize,
+    pub action_size: usize,
+    pub resident_pct: f64,
+    pub action_pct: f64,
     pub elapsed: f64,
 }
 
 impl Summary {
-    pub fn from_stats(stats: &Stats, elapsed: f64) -> Self {
-        let page_size = *crate::pagesize::PAGE_SIZE as i64;
+    pub fn from_stats(stats: &Stats, elapsed: f64, action_sign: isize) -> Self {
+        let page_size = *crate::pagesize::PAGE_SIZE;
         let total_pages = stats.total_pages.load(Ordering::Relaxed);
-        let pages_in_core = stats.total_pages_in_core.load(Ordering::Relaxed);
+        let action_pages = stats.action_pages.load(Ordering::Relaxed);
+        let initial = stats.initial_pages_in_core.load(Ordering::Relaxed);
+        let signed_action = (action_pages as isize) * action_sign;
+        let total_resident_pages = initial.saturating_add_signed(signed_action);
         let total_files = stats.total_files.load(Ordering::Relaxed);
         let total_dirs = stats.total_dirs.load(Ordering::Relaxed);
 
         let total_size = total_pages * page_size;
-        let in_core_size = pages_in_core * page_size;
-        let pct = if total_pages > 0 {
-            100.0 * pages_in_core as f64 / total_pages as f64
+        let resident_size = total_resident_pages * page_size;
+        let action_size = action_pages * page_size;
+        let resident_pct = if total_pages > 0 {
+            100.0 * total_resident_pages as f64 / total_pages as f64
+        } else {
+            0.0
+        };
+        let action_pct = if total_pages > 0 {
+            100.0 * action_pages as f64 / total_pages as f64
         } else {
             0.0
         };
@@ -55,10 +63,13 @@ impl Summary {
             total_files,
             total_dirs,
             total_pages,
-            pages_in_core,
+            total_resident_pages,
+            action_pages,
             total_size,
-            in_core_size,
-            pct,
+            resident_size,
+            action_size,
+            resident_pct,
+            action_pct,
             elapsed,
         }
     }
@@ -77,30 +88,29 @@ mod tests {
         assert_eq!(pretty_size(1024 * 1024), "1.0M");
         assert_eq!(pretty_size(1024 * 1024 * 1024), "1.0G");
         assert_eq!(pretty_size(2 * 1024 * 1024 * 1024), "2.0G");
-        assert_eq!(pretty_size(1024_i64.pow(4)), "1.0T");
-    }
-
-    #[test]
-    fn test_pretty_size_negative() {
-        assert_eq!(pretty_size(-100), "-100");
+        assert_eq!(pretty_size(1024_usize.pow(4)), "1.0T");
     }
 
     #[test]
     fn test_summary_from_stats_zero() {
         let stats = Stats::new();
-        let summary = Summary::from_stats(&stats, 1.0);
+        let summary = Summary::from_stats(&stats, 1.0, 0);
         assert_eq!(summary.total_files, 0);
         assert_eq!(summary.total_pages, 0);
-        assert!((summary.pct - 0.0).abs() < f64::EPSILON);
+        assert!((summary.resident_pct - 0.0).abs() < f64::EPSILON);
+        assert!((summary.action_pct - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_summary_pct_calculation() {
+    fn test_summary_pct() {
         use std::sync::atomic::Ordering;
         let stats = Stats::new();
         stats.total_pages.store(200, Ordering::Relaxed);
-        stats.total_pages_in_core.store(100, Ordering::Relaxed);
-        let summary = Summary::from_stats(&stats, 0.5);
-        assert!((summary.pct - 50.0).abs() < 0.001);
+        stats.initial_pages_in_core.store(50, Ordering::Relaxed);
+        stats.action_pages.store(100, Ordering::Relaxed);
+        // resident = initial(50) + action(100) * sign(1) = 150
+        let summary = Summary::from_stats(&stats, 0.5, 1);
+        assert!((summary.resident_pct - 75.0).abs() < 0.001);
+        assert!((summary.action_pct - 50.0).abs() < 0.001);
     }
 }

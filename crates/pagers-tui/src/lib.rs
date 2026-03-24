@@ -29,6 +29,7 @@ pub fn run<PM: PageMap + Send + 'static>(
     term: Arc<AtomicBool>,
     core_stats: Arc<Stats>,
     label: &str,
+    action_sign: isize,
     start: Instant,
 ) -> Result<()> {
     color_eyre::install()?;
@@ -89,6 +90,7 @@ pub fn run<PM: PageMap + Send + 'static>(
                 &core_stats,
                 elapsed,
                 label,
+                action_sign,
                 frame.area(),
                 frame.buffer_mut(),
             );
@@ -99,7 +101,9 @@ pub fn run<PM: PageMap + Send + 'static>(
         }
     }
 
-    term_cleanup.store(true, std::sync::atomic::Ordering::Relaxed);
+    if quit {
+        term_cleanup.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 
     if !quit {
         let elapsed = start.elapsed().as_secs_f64();
@@ -114,6 +118,7 @@ pub fn run<PM: PageMap + Send + 'static>(
                 &core_stats,
                 elapsed,
                 label,
+                action_sign,
                 buf.area,
                 buf,
             );
