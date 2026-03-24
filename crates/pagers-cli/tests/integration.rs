@@ -682,6 +682,7 @@ fn test_touch_then_evict_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
     fs::write(&file_path, vec![0xABu8; 4096 * 30]).unwrap();
+    fs::File::open(&file_path).unwrap().sync_all().unwrap();
 
     // Touch
     let output = pagers_bin()
