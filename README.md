@@ -158,7 +158,6 @@ Files are traversed in parallel using [rayon](https://github.com/rayon-rs/rayon)
 | Platforms | Linux, FreeBSD, Solaris, macOS, HP-UX, OpenBSD | Linux, macOS\* |
 | Cache query | `mincore(2)` | `cachestat(2)` on Linux 6.5+, `mincore(2)` fallback |
 | Live TUI | Sort of | Yes |
-| Output formats | Human-readable | Human (TUI on terminal), key=value, JSON (when piped) |
 | Daemon mode | `-d` (requires `-l`/`-L`) | `-d` for `lock` and `lockall` |
 | Parallel traversal | No | Yes (rayon) |
 | Range operations | `-p` page ranges | `-p` byte ranges with unit suffixes |
