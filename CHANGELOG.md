@@ -2,11 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-03-24
+
+### Documentation
+
+- *(cliff)* Update cliff.toml
+
+### Miscellaneous Tasks
+
+- *(Cargo.lock)* Update deps
+
 ## [0.1.1] - 2026-03-24
 
 ### Bug Fixes
 
 - *(ci)* Fix release workflow (hopefully)
+
+### Miscellaneous Tasks
+
+- *(release)* Prepare for v0.1.1
 
 ## [0.1.0] - 2026-03-24
 

@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
@@ -14,7 +14,7 @@ readme = "README.md"
 [workspace.dependencies]
 bitvec = "1"
 nix = "0.31"
-pagers-core = { path = "crates/pagers-core", version = "0.1.1", default-features = false }
+pagers-core = { path = "crates/pagers-core", version = "0.1.2", default-features = false }
 tempfile = "3"
 humantime = "2"
 tracing = "0.1.44"
