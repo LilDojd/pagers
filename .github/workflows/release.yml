@@ -45,9 +45,6 @@ jobs:
           - target: armv7-unknown-linux-gnueabihf
             os: ubuntu-latest
             nix-package: pagers-armv7-unknown-linux-gnueabihf
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            nix-package: pagers
           - target: aarch64-apple-darwin
             os: macos-latest
             nix-package: pagers
