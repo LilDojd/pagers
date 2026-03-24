@@ -1,4 +1,4 @@
-name: Docker Automated Builds
+name: Docker
 
 on:
   push:
@@ -10,46 +10,34 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  docker:
-    name: Docker Build and Push
+  build-push:
+    name: Build (${{ matrix.arch }})
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            nix-package: container-amd64
+          - arch: arm64
+            nix-package: container-arm64
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/pagers
-            ghcr.io/${{ github.repository_owner }}/pagers
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=semver,pattern={{version}}
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: DeterminateSystems/flakehub-cache-action@v3
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+      - name: Build container image
+        run: nix build .#${{ matrix.nix-package }}
 
       - name: Login to Docker Hub
         if: github.event_name != 'pull_request'
@@ -66,14 +54,92 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - name: Determine arch tag
+        id: tag
+        run: echo "value=sha-${GITHUB_SHA::7}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+
+      - name: Push to GHCR
+        if: github.event_name != 'pull_request'
+        run: |
+          nix run .#${{ matrix.nix-package }}.copyTo -- \
+            docker://ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.value }} \
+            --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Push to Docker Hub
+        if: github.event_name != 'pull_request'
+        run: |
+          nix run .#${{ matrix.nix-package }}.copyTo -- \
+            docker://${{ secrets.DOCKER_HUB_USERNAME }}/pagers:${{ steps.tag.outputs.value }} \
+            --dest-creds "${{ secrets.DOCKER_HUB_USERNAME }}:${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}"
+
+      - name: Scan the image
+        if: github.event_name != 'pull_request'
+        uses: anchore/sbom-action@v0
         with:
-          context: ./
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
+          image: ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.value }}
+
+  manifest:
+    name: Create multi-arch manifest
+    if: github.event_name != 'pull_request'
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine tags
+        id: tags
+        run: |
+          SHA="${GITHUB_SHA::7}"
+          TAGS="sha-${SHA}"
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAGS="${TAGS} ${VERSION} latest"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            TAGS="${TAGS} main"
+          fi
+
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "ghcr=ghcr.io/${{ github.repository }}" >> "$GITHUB_OUTPUT"
+          echo "docker=${{ secrets.DOCKER_HUB_USERNAME }}/pagers" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push manifests
+        run: |
+          GHCR="${{ steps.tags.outputs.ghcr }}"
+          DOCKER="${{ steps.tags.outputs.docker }}"
+          SHA="${{ steps.tags.outputs.sha }}"
+
+          for TAG in ${{ steps.tags.outputs.tags }}; do
+            # GHCR
+            docker manifest create "${GHCR}:${TAG}" \
+              "${GHCR}:sha-${SHA}-amd64" \
+              "${GHCR}:sha-${SHA}-arm64"
+            docker manifest annotate "${GHCR}:${TAG}" "${GHCR}:sha-${SHA}-amd64" --os linux --arch amd64
+            docker manifest annotate "${GHCR}:${TAG}" "${GHCR}:sha-${SHA}-arm64" --os linux --arch arm64
+            docker manifest push "${GHCR}:${TAG}"
+
+            # Docker Hub
+            docker manifest create "${DOCKER}:${TAG}" \
+              "${DOCKER}:sha-${SHA}-amd64" \
+              "${DOCKER}:sha-${SHA}-arm64"
+            docker manifest annotate "${DOCKER}:${TAG}" "${DOCKER}:sha-${SHA}-amd64" --os linux --arch amd64
+            docker manifest annotate "${DOCKER}:${TAG}" "${DOCKER}:sha-${SHA}-arm64" --os linux --arch arm64
+            docker manifest push "${DOCKER}:${TAG}"
+          done
+
+      - name: Image digest
+        run: |
+          GHCR="${{ steps.tags.outputs.ghcr }}"
+          docker manifest inspect "${GHCR}:sha-${{ steps.tags.outputs.sha }}" | jq .digest

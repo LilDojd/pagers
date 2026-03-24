@@ -19,6 +19,10 @@
       url = "https://flakehub.com/f/numtide/treefmt-nix/0.1.*";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nix2container = {
+      url = "github:nlewo/nix2container";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     omnix = {
       url = "github:juspay/omnix";
       inputs.nixpkgs.follows = "nixpkgs";
