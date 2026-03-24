@@ -155,17 +155,15 @@ Files are traversed in parallel using [rayon](https://github.com/rayon-rs/rayon)
 | | vmtouch | pagers |
 |-|---------|--------|
 | Language | C | Rust |
-| Platforms | Most Unix-like systems | Linux, macOS |
+| Platforms | Linux, FreeBSD, Solaris, macOS, HP-UX, OpenBSD | Linux, macOS\* |
 | Cache query | `mincore(2)` | `cachestat(2)` on Linux 6.5+, `mincore(2)` fallback |
 | Live TUI | No | Yes |
 | Output formats | Human-readable | Human (TUI on terminal), key=value, JSON (when piped) |
-| Daemon mode | `-d` (lock only) | `-d` for `lock` and `lockall` |
+| Daemon mode | `-d` (requires `-l`/`-L`) | `-d` for `lock` and `lockall` |
 | Parallel traversal | No | Yes (rayon) |
-| Glob filtering | No | `-i` / `-I` patterns |
-| Batch input | No | `-b` / `-0` (stdin, file) |
-| Range operations | `-p` pages | `-p` byte ranges with unit suffixes |
-| Size filtering | No | `-m` max file size |
-| Hardlink awareness | No | `-H` flag |
+| Range operations | `-p` page ranges | `-p` byte ranges with unit suffixes |
+
+\* tested on
 
 ## See also
 

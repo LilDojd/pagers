@@ -39,6 +39,7 @@
           with pkgs;
           [
             vmtouch
+            hyperfine
             just
             nixd
             bacon
