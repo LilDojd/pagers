@@ -1,7 +1,15 @@
 [package]
 name = "pagers"
-version = "0.1.0"
-edition = "2024"
+description = "Page cache diagnostics and control tool for Linux and macOS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["page-cache", "cachestat", "mincore", "mlock", "diagnostics"]
+categories = ["command-line-utilities", "filesystem", "os"]
 
 [[bin]]
 name = "pagers"

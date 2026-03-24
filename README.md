@@ -4,7 +4,6 @@
 [![crates.io](https://img.shields.io/crates/v/pagers.svg)](https://crates.io/crates/pagers)
 [![codecov](https://codecov.io/gh/LilDojd/pagers/branch/main/graph/badge.svg)](https://codecov.io/gh/LilDojd/pagers)
 
-
 Portable file system page cache diagnostics and control for Linux and macOS.
 
 `pagers` queries, touches, evicts, and locks the page cache using `cachestat(2)`, `mincore(2)`, `posix_fadvise(2)`, and `mlock(2)`. When stdout is a terminal it renders a live TUI with per-file residency maps. When piped, it emits plain text, key=value pairs, or JSON.
@@ -87,12 +86,12 @@ pagers query -I '*.dat' -m 500M -p 0..1G /data
 
 ## Subcommands
 
-| Command   | Description |
+| Command | Description |
 |-----------|-------------|
-| `query`   | Show which pages of a file are in the page cache |
-| `touch`   | Load pages into the page cache |
-| `evict`   | Drop pages from the page cache |
-| `lock`    | Touch + `mlock(2)` pages in physical memory |
+| `query` | Show which pages of a file are in the page cache |
+| `touch` | Load pages into the page cache |
+| `evict` | Drop pages from the page cache |
+| `lock` | Touch + `mlock(2)` pages in physical memory |
 | `lockall` | Lock + `mlockall(MCL_CURRENT)` |
 
 ## Options
@@ -168,20 +167,10 @@ Files are traversed in parallel using [rayon](https://github.com/rayon-rs/rayon)
 | Size filtering | No | `-m` max file size |
 | Hardlink awareness | No | `-H` flag |
 
-## Project structure
-
-```
-crates/
-  pagers-core/   Page cache operations (query, touch, evict, lock)
-  pagers-tui/    Terminal UI (ratatui)
-  pagers-cli/    CLI binary (clap)
-```
-
 ## See also
 
-- [vmtouch](https://hoytech.com/vmtouch/) — the original page cache control tool
+- [vmtouch](https://hoytech.com/vmtouch/) — the og page cache control tool
 - [cachestat(2)](https://man7.org/linux/man-pages/man2/cachestat.2.html) — Linux 6.5+ syscall for page cache statistics
 - [mincore(2)](https://man7.org/linux/man-pages/man2/mincore.2.html) — determine whether pages are resident in memory
 - [posix_fadvise(2)](https://man7.org/linux/man-pages/man2/posix_fadvise.2.html) — predeclare an access pattern for file data
 - [mlock(2)](https://man7.org/linux/man-pages/man2/mlock.2.html) — lock pages in memory
-

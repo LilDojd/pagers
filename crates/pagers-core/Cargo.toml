@@ -1,7 +1,14 @@
 [package]
 name = "pagers-core"
-version = "0.1.0"
-edition = "2024"
+description = "Core library for page cache diagnostics and control on Linux and macOS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["page-cache", "cachestat", "mincore", "mlock", "filesystem"]
+categories = ["filesystem", "os"]
 
 [features]
 default = ["bitvec"]
