@@ -20,9 +20,9 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{TerminalOptions, Viewport};
 
-/// Maximum number of file rows to display.
 const MAX_DISPLAY_FILES: u16 = 8;
 const MAX_DISPLAY_PAGES: usize = 32;
+const FRAME_BUDGET: Duration = Duration::from_millis(100);
 
 pub fn run<PM: PageMap + Send + 'static>(
     rx: mpsc::Receiver<CoreEvent<PM>>,
@@ -54,32 +54,30 @@ pub fn run<PM: PageMap + Send + 'static>(
     let mut file_rows_hwm: u16 = 0;
 
     loop {
-        match tui_rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(evt) => {
-                match app.handle_event(evt) {
-                    app::ControlFlow::Continue => {}
-                    app::ControlFlow::Done => done = true,
-                    app::ControlFlow::Quit => quit = true,
-                }
+        match tui_rx.recv_timeout(FRAME_BUDGET) {
+            Ok(evt) => match app.handle_event(evt) {
+                app::ControlFlow::Continue => {}
+                app::ControlFlow::Done => done = true,
+                app::ControlFlow::Quit => quit = true,
+            },
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
 
-                if !done && !quit {
-                    while let Ok(next) = tui_rx.try_recv() {
-                        match app.handle_event(next) {
-                            app::ControlFlow::Continue => {}
-                            app::ControlFlow::Done => {
-                                done = true;
-                                break;
-                            }
-                            app::ControlFlow::Quit => {
-                                quit = true;
-                                break;
-                            }
-                        }
+        if !done && !quit {
+            while let Ok(next) = tui_rx.try_recv() {
+                match app.handle_event(next) {
+                    app::ControlFlow::Continue => {}
+                    app::ControlFlow::Done => {
+                        done = true;
+                        break;
+                    }
+                    app::ControlFlow::Quit => {
+                        quit = true;
+                        break;
                     }
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
         let elapsed = start.elapsed().as_secs_f64();
