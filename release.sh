@@ -25,6 +25,10 @@ for toml in crates/*/Cargo.toml; do
 	sed -i -E "s/^version = \"[^\"]+\"/version = \"${VERSION}\"/" "$toml"
 done
 
+# update workspace dependency version references
+sed -i -E "s/(pagers-core = \{.*version = \")[^\"]+(\")/\1${VERSION}\2/" Cargo.toml
+sed -i -E "s/(pagers-tui = \{.*version = \")[^\"]+(\")/\1${VERSION}\2/" crates/pagers-cli/Cargo.toml
+
 # update the changelog
 git cliff --config cliff.toml --tag "$TAG" -o CHANGELOG.md
 
