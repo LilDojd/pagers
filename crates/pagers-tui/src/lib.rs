@@ -51,6 +51,7 @@ pub fn run<PM: PageMap + Send + 'static>(
     let mut app = App::new();
     let mut quit = false;
     let mut done = false;
+    let mut file_rows_hwm: u16 = 0;
 
     loop {
         match tui_rx.recv_timeout(Duration::from_millis(100)) {
@@ -83,15 +84,16 @@ pub fn run<PM: PageMap + Send + 'static>(
 
         let elapsed = start.elapsed().as_secs_f64();
         let files = app.visible_files(MAX_DISPLAY_FILES as usize);
+        file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
         terminal.draw(|frame| {
-            ui::render_viewport(
-                &files,
-                MAX_DISPLAY_FILES,
+            let [files_area, stats_area] = ui::layout(file_rows_hwm, frame.area());
+            ui::render_refs_to_buf(&files, file_rows_hwm, files_area, frame.buffer_mut());
+            stats::render_summary(
                 &core_stats,
                 elapsed,
                 label,
                 action_sign,
-                frame.area(),
+                stats_area,
                 frame.buffer_mut(),
             );
         })?;
@@ -108,20 +110,13 @@ pub fn run<PM: PageMap + Send + 'static>(
     if !quit {
         let elapsed = start.elapsed().as_secs_f64();
         let files = app.visible_files(MAX_DISPLAY_FILES as usize);
-        let n = files.len().min(MAX_DISPLAY_FILES as usize) as u16;
-        let total_lines = n + stats::SUMMARY_LINES;
+        file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
+        let total_lines = file_rows_hwm + stats::SUMMARY_LINES;
 
         let _ = terminal.insert_before(total_lines, |buf| {
-            ui::render_viewport(
-                &files,
-                MAX_DISPLAY_FILES,
-                &core_stats,
-                elapsed,
-                label,
-                action_sign,
-                buf.area,
-                buf,
-            );
+            let [files_area, stats_area] = ui::layout(file_rows_hwm, buf.area);
+            ui::render_refs_to_buf(&files, file_rows_hwm, files_area, buf);
+            stats::render_summary(&core_stats, elapsed, label, action_sign, stats_area, buf);
         });
     }
 

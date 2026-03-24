@@ -8,25 +8,12 @@ use crate::MAX_DISPLAY_PAGES;
 use crate::state::FileState;
 use crate::stats;
 
-/// Render file rows and stats summary into a buffer.
-pub(crate) fn render_viewport<PM: PageMap>(
-    files: &[&FileState<PM>],
-    max_file_rows: u16,
-    core_stats: &pagers_core::ops::Stats,
-    elapsed: f64,
-    label: &str,
-    action_sign: isize,
-    area: Rect,
-    buf: &mut ratatui::buffer::Buffer,
-) {
-    let n = files.len().min(max_file_rows as usize) as u16;
-    let [files_area, stats_area] = Layout::vertical([
-        Constraint::Length(n),
+pub(crate) fn layout(file_rows: u16, area: Rect) -> [Rect; 2] {
+    Layout::vertical([
+        Constraint::Length(file_rows),
         Constraint::Length(stats::SUMMARY_LINES),
     ])
-    .areas(area);
-    render_refs_to_buf(files, max_file_rows, files_area, buf);
-    stats::render_summary(core_stats, elapsed, label, action_sign, stats_area, buf);
+    .areas(area)
 }
 
 pub(crate) fn render_refs_to_buf<PM: PageMap>(

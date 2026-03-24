@@ -83,15 +83,15 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
                 result.pages_in_core_before(),
                 result.pages_in_core_after(),
             );
-            stats.action_pages.fetch_add(total_action, Ordering::Relaxed);
+            stats
+                .action_pages
+                .fetch_add(total_action, Ordering::Relaxed);
 
             self.sink.send(Event::FileDone {
                 path: path_str,
                 pages_in_core: 0,
                 total_pages: start_info.total_pages,
-                residency: PM::from_bools(
-                    std::iter::repeat_n(false, start_info.total_pages),
-                ),
+                residency: PM::from_bools(std::iter::repeat_n(false, start_info.total_pages)),
             });
 
             return Some(result.into_output());
