@@ -129,8 +129,25 @@ hyperfine \
   "$PAGERS touch -q $TREE_DIR"
 echo
 
-# 5. Touch time — batch mode
-echo "=== 5. Touch: batch mode (1000 files from file list) ==="
+# 5. Touch (half-resident) — file is 50% cached, touch the whole thing
+for i in "${!BIG_FILES[@]}"; do
+  f="${BIG_FILES[$i]}"
+  size="${BIG_LABELS[$i]}"
+  half_mb=$(( BIG_SIZES_MB[$i] / 2 ))
+
+  echo "=== 5. Touch (50% resident): ${size} file ==="
+  hyperfine \
+    --warmup 1 \
+    --min-runs 5 \
+    --prepare "$(printf '%q evict -q %q && %q touch -q -p 0-%dM %q 2>/dev/null' \
+      "$PAGERS" "$f" "$PAGERS" "$half_mb" "$f")" \
+    "$VMTOUCH -t $f" \
+    "$PAGERS touch -q $f"
+  echo
+done
+
+# 6. Touch time — batch mode
+echo "=== 6. Touch: batch mode (1000 files from file list) ==="
 hyperfine \
   --warmup 1 \
   --min-runs 5 \
