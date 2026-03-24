@@ -63,6 +63,23 @@ jobs:
           name="pagers-v${version}-${{ matrix.target }}"
           mkdir -p "${name}"
           cp result/bin/pagers "${name}/"
+
+          if [ -d result/share/man ]; then
+            mkdir -p "${name}/man"
+            cp result/share/man/man1/*.1 "${name}/man/"
+          fi
+
+          if [ -d result/share/bash-completion ]; then
+            mkdir -p "${name}/completions"
+            cp result/share/bash-completion/completions/* "${name}/completions/"
+          fi
+          if [ -d result/share/zsh ]; then
+            cp result/share/zsh/site-functions/* "${name}/completions/"
+          fi
+          if [ -d result/share/fish ]; then
+            cp result/share/fish/vendor_completions.d/* "${name}/completions/"
+          fi
+
           tar czf "${name}.tar.gz" "${name}"
           echo "ASSET=${name}.tar.gz" >> "$GITHUB_OUTPUT"
 

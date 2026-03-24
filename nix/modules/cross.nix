@@ -31,8 +31,20 @@
             "${crossPkgs.stdenv.cc.targetPrefix}cc";
           HOST_CC = "${pkgs.stdenv.cc}/bin/cc";
 
+          postInstall = ''
+            buildDir=$(find target -path '*/build/pagers-*/out' -type d -exec test -f '{}/pagers.bash' \; -print -quit)
+            if [ -n "$buildDir" ]; then
+              installManPage "$buildDir"/*.1
+              installShellCompletion \
+                --bash "$buildDir"/pagers.bash \
+                --zsh "$buildDir"/_pagers \
+                --fish "$buildDir"/pagers.fish
+            fi
+          '';
+
           nativeBuildInputs = [
             crossPkgs.stdenv.cc
+            pkgs.installShellFiles
           ];
         };
     in

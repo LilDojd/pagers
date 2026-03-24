@@ -33,6 +33,21 @@
       pagers = craneLib.buildPackage (commonArgs // {
         inherit cargoArtifacts;
         meta.description = "A tool for monitoring page cache usage";
+
+        postInstall = ''
+          buildDir=$(find target -path '*/build/pagers-*/out' -type d -exec test -f '{}/pagers.bash' \; -print -quit)
+          if [ -n "$buildDir" ]; then
+            installManPage "$buildDir"/*.1
+            installShellCompletion \
+              --bash "$buildDir"/pagers.bash \
+              --zsh "$buildDir"/_pagers \
+              --fish "$buildDir"/pagers.fish
+          fi
+        '';
+
+        nativeBuildInputs = (commonArgs.nativeBuildInputs or [ ]) ++ [
+          pkgs.installShellFiles
+        ];
       });
     in
     {
