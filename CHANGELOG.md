@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-03-24
+
+### Bug Fixes
+
+- *(ci)* Fix release workflow (hopefully)
+
 ## [0.1.0] - 2026-03-24
 
 ### Bug Fixes
@@ -95,6 +101,7 @@ All notable changes to this project will be documented in this file.
 - Add benchmark script against vmtouch
 - Update bench.sh
 - *(doc)* Update TUI comment on vmtouch
+- *(release)* Prepare for v0.1.0
 
 ### Performance
 
