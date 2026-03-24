@@ -289,7 +289,7 @@ mod tests {
             path: "t".to_string(),
             total_pages: 1,
             pages_in_core: 0,
-            residency: bitvec::bitvec![0],
+            residency: bitvec::bitvec![0; 1],
             done: false,
         };
         let buckets = file.bucketize(1);

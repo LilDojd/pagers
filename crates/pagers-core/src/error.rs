@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{num::TryFromIntError, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -10,6 +10,9 @@ pub enum Error {
 
     #[error("{0}")]
     Syscall(#[from] nix::errno::Errno),
+
+    #[error("{0}")]
+    TryFromInt(#[from] TryFromIntError),
 
     #[error("{path}: offset {offset} beyond file size {file_len}")]
     OffsetBeyondFile {
