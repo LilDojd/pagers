@@ -6,6 +6,7 @@ pub struct Query;
 
 impl Op for Query {
     const LABEL: &str = "resident";
+    const MUTATES_RESIDENCY: bool = false;
     type Output = ();
 
     fn execute(&self, _ctx: &FileContext) -> crate::Result<()> {

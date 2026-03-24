@@ -23,6 +23,7 @@ pub use touch::Touch;
 
 pub trait Op: Sync {
     const LABEL: &str;
+    const MUTATES_RESIDENCY: bool = true;
 
     type Output: Send;
     fn execute(&self, ctx: &FileContext) -> crate::Result<Self::Output>;

@@ -104,8 +104,11 @@ pub fn process_file<O: Op, PM: PageMap>(
             .map_err(io_err)?
     });
 
-    let (pages_in_core_before, residency_before) =
-        page_count::<PM>(&file, &mmap, offset, len, with_residency)?;
+    let (pages_in_core_before, residency_before) = if with_residency {
+        page_count::<PM>(&file, &mmap, offset, len, true)?
+    } else {
+        (0, None)
+    };
 
     let ctx = FileContext {
         file: &file,
@@ -118,8 +121,19 @@ pub fn process_file<O: Op, PM: PageMap>(
 
     let output = op.execute(&ctx)?;
 
-    let (pages_in_core_after, residency_after) =
-        page_count::<PM>(&file, &mmap, offset, len, with_residency)?;
+    let (pages_in_core_after, residency_before, residency_after) =
+        match (O::MUTATES_RESIDENCY, with_residency) {
+            (false, true) => (pages_in_core_before, None, residency_before),
+            (false, false) => {
+                let (count, res) = page_count::<PM>(&file, &mmap, offset, len, false)?;
+                (count, None, res)
+            }
+            (true, true) => {
+                let (count, res) = page_count::<PM>(&file, &mmap, offset, len, true)?;
+                (count, residency_before, res)
+            }
+            (true, false) => (0, None, None),
+        };
 
     Ok(Some(FileResult {
         output,
@@ -256,9 +270,45 @@ mod tests {
                     let result: R<()> = process_file(&Query, f.path(), &range, true, None)
                         .unwrap()
                         .unwrap();
-                    assert!(result.residency_before.is_some());
+                    // Query moves residency_before into residency_after (no clone)
+                    assert!(result.residency_before.is_none());
                     assert!(result.residency_after.is_some());
-                    assert_eq!(result.residency_before.unwrap().len(), 4);
+                    assert_eq!(result.residency_after.unwrap().len(), 4);
+                }
+
+                #[test]
+                fn query_with_residency_reuses_before() {
+                    let (f, _) = create_temp_file(4);
+                    let range = FileRange {
+                        offset: 0,
+                        max_len: None,
+                    };
+                    let result: R<()> = process_file(&Query, f.path(), &range, true, None)
+                        .unwrap()
+                        .unwrap();
+                    // Query doesn't mutate residency, so before == after count
+                    assert_eq!(result.pages_in_core_before, result.pages_in_core_after);
+                    assert!(result.residency_before.is_none());
+                    assert!(result.residency_after.is_some());
+                }
+
+                #[test]
+                fn evict_without_residency_skips_mincore() {
+                    let (f, _) = create_temp_file(4);
+                    let range = FileRange {
+                        offset: 0,
+                        max_len: None,
+                    };
+                    let result: R<()> = process_file(&Evict, f.path(), &range, false, None)
+                        .unwrap()
+                        .unwrap();
+                    // Without TUI, mutating ops skip mincore: before=0, after=0
+                    assert_eq!(result.pages_in_core_before, 0);
+                    assert_eq!(result.pages_in_core_after, 0);
+                    assert!(result.residency_before.is_none());
+                    assert!(result.residency_after.is_none());
+                    // total_pages still computed from file size
+                    assert_eq!(result.total_pages, 4);
                 }
 
                 #[test]

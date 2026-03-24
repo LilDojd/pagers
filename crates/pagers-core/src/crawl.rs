@@ -39,86 +39,90 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
     let sink_ref = sink.as_ref();
     let need_residency = sink_ref.is_some();
 
-    let outputs: Vec<O::Output> = file_paths
-        .par_iter()
-        .filter_map(|path| {
-            let path_str = path.display().to_string();
+    let process_one = |path: &PathBuf| -> Option<O::Output> {
+        let path_str = path.display().to_string();
 
-            if let Some(sink) = sink_ref {
-                let full_file = FileRange {
-                    offset: 0,
-                    max_len: None,
-                };
-                match ops::file_info::<PM>(path, &full_file) {
-                    Ok(Some(info)) => sink.send(Event::FileStart {
-                        path: path_str.clone(),
-                        total_pages: info.total_pages,
-                        residency: info.residency,
-                    }),
-                    Ok(None) => return None,
-                    Err(e) => {
-                        tracing::warn!("{}: {e}", path.display());
-                        return None;
-                    }
-                }
-            }
-
-            let page_offset = range.offset as usize / *crate::pagesize::PAGE_SIZE;
-            let on_progress;
-            let on_progress_ref = if let Some(sink) = sink_ref {
-                on_progress = move |pages_walked: usize| {
-                    sink.send(Event::FileProgress {
-                        path: path_str.clone(),
-                        page_offset,
-                        pages_walked,
-                    });
-                };
-                Some(&on_progress as &(dyn Fn(usize) + Sync))
-            } else {
-                None
+        if let Some(sink) = sink_ref {
+            let full_file = FileRange {
+                offset: 0,
+                max_len: None,
             };
-
-            let result = match ops::process_file::<O, PM>(
-                op,
-                path,
-                range,
-                need_residency,
-                on_progress_ref,
-            ) {
-                Ok(Some(r)) => r,
+            match ops::file_info::<PM>(path, &full_file) {
+                Ok(Some(info)) => sink.send(Event::FileStart {
+                    path: path_str.clone(),
+                    total_pages: info.total_pages,
+                    residency: info.residency,
+                }),
                 Ok(None) => return None,
                 Err(e) => {
-                    tracing::warn!("{e}");
+                    tracing::warn!("{}: {e}", path.display());
                     return None;
                 }
-            };
-
-            stats
-                .total_pages
-                .fetch_add(result.total_pages as i64, Ordering::Relaxed);
-            stats.total_files.fetch_add(1, Ordering::Relaxed);
-            stats
-                .total_pages_in_core
-                .fetch_add(result.pages_in_core_after, Ordering::Relaxed);
-
-            if let Some(sink) = sink_ref {
-                let full_file = FileRange {
-                    offset: 0,
-                    max_len: None,
-                };
-                if let Ok(Some(info)) = ops::file_info::<PM>(path, &full_file) {
-                    sink.send(Event::FileDone {
-                        path: path.display().to_string(),
-                        pages_in_core: info.residency.count_filled(),
-                        total_pages: info.total_pages,
-                        residency: info.residency,
-                    });
-                }
             }
+        }
 
-            Some(result.output)
-        })
-        .collect();
+        let page_offset = range.offset as usize / *crate::pagesize::PAGE_SIZE;
+        let on_progress;
+        let on_progress_ref = if let Some(sink) = sink_ref {
+            on_progress = move |pages_walked: usize| {
+                sink.send(Event::FileProgress {
+                    path: path_str.clone(),
+                    page_offset,
+                    pages_walked,
+                });
+            };
+            Some(&on_progress as &(dyn Fn(usize) + Sync))
+        } else {
+            None
+        };
+
+        let result = match ops::process_file::<O, PM>(
+            op,
+            path,
+            range,
+            need_residency,
+            on_progress_ref,
+        ) {
+            Ok(Some(r)) => r,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::warn!("{e}");
+                return None;
+            }
+        };
+
+        stats
+            .total_pages
+            .fetch_add(result.total_pages as i64, Ordering::Relaxed);
+        stats.total_files.fetch_add(1, Ordering::Relaxed);
+        stats
+            .total_pages_in_core
+            .fetch_add(result.pages_in_core_after, Ordering::Relaxed);
+
+        if let Some(sink) = sink_ref {
+            let full_file = FileRange {
+                offset: 0,
+                max_len: None,
+            };
+            if let Ok(Some(info)) = ops::file_info::<PM>(path, &full_file) {
+                sink.send(Event::FileDone {
+                    path: path.display().to_string(),
+                    pages_in_core: info.residency.count_filled(),
+                    total_pages: info.total_pages,
+                    residency: info.residency,
+                });
+            }
+        }
+
+        Some(result.output)
+    };
+
+    const PAR_THRESHOLD: usize = 2;
+    let outputs: Vec<O::Output> = if file_paths.len() < PAR_THRESHOLD {
+        file_paths.iter().filter_map(process_one).collect()
+    } else {
+        file_paths.par_iter().filter_map(process_one).collect()
+    };
 
     if let Some(sink) = sink {
         sink.send(Event::AllDone);
