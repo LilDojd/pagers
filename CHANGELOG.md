@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### Miscellaneous Tasks
 
 - *(Cargo.lock)* Update deps
+- *(release)* Prepare for v0.1.2
 
 ## [0.1.1] - 2026-03-24
 

@@ -29,6 +29,9 @@ done
 sed -i -E "s/(pagers-core = \{.*version = \")[^\"]+(\")/\1${VERSION}\2/" Cargo.toml
 sed -i -E "s/(pagers-tui = \{.*version = \")[^\"]+(\")/\1${VERSION}\2/" crates/pagers-cli/Cargo.toml
 
+# sync Cargo.lock with the new versions
+cargo update --workspace
+
 # update the changelog
 git cliff --config cliff.toml --tag "$TAG" -o CHANGELOG.md
 
