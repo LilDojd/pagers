@@ -163,6 +163,18 @@ Files are traversed in parallel using [rayon](https://github.com/rayon-rs/rayon)
 | Parallel traversal | No | Yes (rayon) |
 | Range operations | `-p` page ranges | `-p` byte ranges with unit suffixes |
 
+### Performance (macOS, M1)
+
+Query and evict perform on par with vmtouch. Touch is **2–6x faster** thanks to parallel traversal:
+
+| Benchmark | vmtouch | pagers | Speedup |
+|-----------|---------|--------|---------|
+| Query 10 GiB file | 178 ms | 178 ms | 1.0x |
+| Evict 10 GiB file | 207 ms | 208 ms | 1.0x |
+| Touch 10 GiB file | 14.0 s | 5.1 s | **2.7x** |
+| Touch 1000 × 1 MiB files | 1.51 s | 239 ms | **6.3x** |
+| Evict 1000 × 1 MiB files | 49.7 ms | 18.9 ms | **2.6x** |
+
 \* tested on
 
 ## See also
