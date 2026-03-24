@@ -47,6 +47,7 @@
             cargo-machete
             clippy
             cargo-autoinherit
+            gnupg
             cargo-flamegraph
             samply
             git-cliff
