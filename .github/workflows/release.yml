@@ -68,7 +68,7 @@ jobs:
 
           if [ -d result/share/man ]; then
             mkdir -p "${name}/man"
-            cp result/share/man/man1/*.1 "${name}/man/"
+            cp result/share/man/man1/* "${name}/man/"
           fi
 
           if [ -d result/share/bash-completion ]; then

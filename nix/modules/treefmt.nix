@@ -10,6 +10,7 @@
       };
       settings.global.excludes = [
         "LICENSE-*"
+        "CHANGELOG.md"
       ];
     };
   };
