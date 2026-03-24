@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use crate::ops::Stats;
 
@@ -75,6 +76,14 @@ impl Summary {
     }
 }
 
+pub fn pretty_elapsed(secs: f64) -> String {
+    if secs < 60.0 {
+        format!("{secs:.1}s")
+    } else {
+        humantime::format_duration(Duration::from_secs(secs as u64)).to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +98,18 @@ mod tests {
         assert_eq!(pretty_size(1024 * 1024 * 1024), "1.0G");
         assert_eq!(pretty_size(2 * 1024 * 1024 * 1024), "2.0G");
         assert_eq!(pretty_size(1024_usize.pow(4)), "1.0T");
+    }
+
+    #[test]
+    fn test_pretty_elapsed() {
+        assert_eq!(pretty_elapsed(0.5), "0.5s");
+        assert_eq!(pretty_elapsed(1.0), "1.0s");
+        assert_eq!(pretty_elapsed(13.919), "13.9s");
+        assert_eq!(pretty_elapsed(59.9), "59.9s");
+        assert_eq!(pretty_elapsed(60.0), "1m");
+        assert_eq!(pretty_elapsed(61.0), "1m 1s");
+        assert_eq!(pretty_elapsed(1801.0), "30m 1s");
+        assert_eq!(pretty_elapsed(3661.0), "1h 1m 1s");
     }
 
     #[test]

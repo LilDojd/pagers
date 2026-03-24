@@ -312,11 +312,7 @@ fn counts_page_count<PM: PageMap>(
     #[cfg(target_os = "linux")]
     if *crate::cachestat::SUPPORTED {
         use std::os::unix::io::AsFd;
-        return Ok(crate::cachestat::cached_pages(
-            file.as_fd(),
-            offset,
-            len as u64,
-        )?);
+        return Ok(crate::cachestat::cached_pages(file.as_fd(), offset, len as u64)?.try_into()?);
     }
     let residency: PM = crate::mincore::residency(mmap, len)?;
     Ok(residency.count_filled())

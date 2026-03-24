@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use pagers_core::ops::Stats;
-use pagers_core::output::pretty_size;
+use pagers_core::output::{pretty_elapsed, pretty_size};
 
 pub(crate) const SUMMARY_LINES: u16 = 5;
 
@@ -60,10 +60,7 @@ pub(crate) fn render_summary(
         pct_line(resident_pages, total_pages, resident_size, total_size),
     ));
 
-    rows.push((
-        "Elapsed:".into(),
-        Line::from(format!("{elapsed:.5} seconds")),
-    ));
+    rows.push(("Elapsed:".into(), Line::from(pretty_elapsed(elapsed))));
 
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
     let line_areas = Layout::vertical(constraints).split(area);

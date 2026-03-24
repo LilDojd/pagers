@@ -20,6 +20,7 @@ serde = ["dep:serde", "bitvec?/serde"]
 serde = { version = "1", features = ["derive"], optional = true }
 bitvec = { workspace = true, optional = true }
 dashmap = { version = "6", optional = true }
+humantime = { workspace = true }
 lazy_static = "1"
 ignore = "0.4"
 libc = "0.2"

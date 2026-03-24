@@ -16,6 +16,7 @@ bitvec = "1"
 nix = "0.31"
 pagers-core = { path = "crates/pagers-core", version = "0.1.0", default-features = false }
 tempfile = "3"
+humantime = "2"
 tracing = "0.1.44"
 
 [profile.release]

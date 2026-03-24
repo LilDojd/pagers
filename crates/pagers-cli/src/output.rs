@@ -1,4 +1,4 @@
-use pagers_core::output::{Summary, pretty_size};
+use pagers_core::output::{Summary, pretty_elapsed, pretty_size};
 
 pub struct Human;
 pub struct Kv;
@@ -65,7 +65,7 @@ impl OutputFormat<Human> for Summary {
             print!("{:.3}%", self.resident_pct);
         }
         println!();
-        println!("         Elapsed: {:.5} seconds", self.elapsed);
+        println!("         Elapsed: {}", pretty_elapsed(self.elapsed));
     }
 }
 
