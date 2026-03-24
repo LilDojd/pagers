@@ -1,7 +1,7 @@
 { inputs, self, ... }:
 {
   imports = [
-    (inputs.git-hooks + /flake-module.nix)
+    inputs.git-hooks.flakeModule
   ];
   perSystem = { config, pkgs, ... }: {
     pre-commit.settings = {
