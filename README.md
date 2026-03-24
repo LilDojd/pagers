@@ -43,17 +43,7 @@ docker pull ghcr.io/lildojd/pagers:latest
 docker run --rm -v /data:/data ghcr.io/lildojd/pagers query /data
 ```
 
-### Supported targets
-
-| Target | Notes |
-|--------|-------|
-| `x86_64-unknown-linux-musl` | Static binary |
-| `aarch64-unknown-linux-musl` | Static binary |
-| `aarch64-unknown-linux-gnu` | |
-| `armv7-unknown-linux-gnueabihf` | |
-| `aarch64-apple-darwin` | Apple Silicon |
-
-MSRV: **1.85.0**
+MSRV: **1.88.0**
 
 ## Usage
 
