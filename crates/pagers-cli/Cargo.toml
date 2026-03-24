@@ -16,8 +16,9 @@ name = "pagers"
 path = "src/main.rs"
 
 [features]
-default = ["bitvec"]
+default = ["bitvec", "rayon"]
 bitvec = ["pagers-core/bitvec", "pagers-tui/bitvec"]
+rayon = ["pagers-core/rayon"]
 
 [dependencies]
 anstyle = "1.0.14"

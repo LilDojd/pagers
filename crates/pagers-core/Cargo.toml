@@ -11,20 +11,21 @@ keywords = ["page-cache", "cachestat", "mincore", "mlock", "filesystem"]
 categories = ["filesystem", "os"]
 
 [features]
-default = ["bitvec"]
+default = ["bitvec", "rayon"]
 bitvec = ["dep:bitvec"]
+rayon = ["dep:rayon", "dep:dashmap"]
 serde = ["dep:serde", "bitvec?/serde"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 bitvec = { workspace = true, optional = true }
-dashmap = "6"
+dashmap = { version = "6", optional = true }
 lazy_static = "1"
 ignore = "0.4"
 libc = "0.2"
 memmap2 = "0.9"
 nix = { workspace = true, features = ["fs", "mman", "feature"] }
-rayon = "1"
+rayon = { version = "1", optional = true }
 thiserror = "2"
 tracing = { workspace = true }
 

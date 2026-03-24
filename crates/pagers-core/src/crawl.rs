@@ -3,13 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 
-use dashmap::DashMap;
 use ignore::WalkBuilder;
-use rayon::prelude::*;
 
 use crate::events::{Event, EventSink};
 use crate::mincore::PageMap;
 use crate::ops::{self, FileRange, Op, Stats};
+use crate::par::{InodeSet, SeenInodes as _, par_collect};
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -32,7 +31,7 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
     stats: &Stats,
     events: Option<Sender<Event<PM>>>,
 ) -> crate::Result<Vec<O::Output>> {
-    let seen_inodes: DashMap<(u64, u64), ()> = DashMap::new();
+    let seen_inodes = InodeSet::default();
     let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
 
     let sink = events.map(EventSink::new);
@@ -76,20 +75,15 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
             None
         };
 
-        let result = match ops::process_file::<O, PM>(
-            op,
-            path,
-            range,
-            need_residency,
-            on_progress_ref,
-        ) {
-            Ok(Some(r)) => r,
-            Ok(None) => return None,
-            Err(e) => {
-                tracing::warn!("{e}");
-                return None;
-            }
-        };
+        let result =
+            match ops::process_file::<O, PM>(op, path, range, need_residency, on_progress_ref) {
+                Ok(Some(r)) => r,
+                Ok(None) => return None,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    return None;
+                }
+            };
 
         stats
             .total_pages
@@ -117,12 +111,7 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
         Some(result.output)
     };
 
-    const PAR_THRESHOLD: usize = 2;
-    let outputs: Vec<O::Output> = if file_paths.len() < PAR_THRESHOLD {
-        file_paths.iter().filter_map(process_one).collect()
-    } else {
-        file_paths.par_iter().filter_map(process_one).collect()
-    };
+    let outputs = par_collect(&file_paths, process_one);
 
     if let Some(sink) = sink {
         sink.send(Event::AllDone);
@@ -136,7 +125,7 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send>(
 fn collect_file_paths(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
-    seen_inodes: &DashMap<(u64, u64), ()>,
+    seen_inodes: &InodeSet,
     stats: &Stats,
 ) -> Vec<PathBuf> {
     let mut all_paths: Vec<PathBuf> = paths.to_vec();
@@ -169,7 +158,7 @@ fn collect_dir_entries(
     root: &Path,
     config: &CrawlConfig,
     needs_meta: bool,
-    seen_inodes: &DashMap<(u64, u64), ()>,
+    seen_inodes: &InodeSet,
     out: &mut Vec<PathBuf>,
 ) {
     let mut builder = WalkBuilder::new(root);
@@ -227,7 +216,7 @@ fn collect_dir_entries(
                 use std::os::unix::fs::MetadataExt;
                 if let Some(ref m) = meta
                     && m.nlink() > 1
-                    && seen_inodes.insert((m.dev(), m.ino()), ()).is_some()
+                    && seen_inodes.already_seen((m.dev(), m.ino()))
                 {
                     continue;
                 }

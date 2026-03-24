@@ -7,5 +7,6 @@ pub mod mlock;
 pub mod ops;
 pub mod output;
 pub mod pagesize;
+mod par;
 
 pub use error::{Error, Result};
