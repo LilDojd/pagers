@@ -19,8 +19,8 @@ body = """
         - {% if commit.breaking %}[**breaking**] {% endif %}\
             {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
             {{ commit.message | split(pat="\n") | first | upper_first | trim }}\
-            {% if commit.github.pr_number %} \
-                ([#{{ commit.github.pr_number }}](https://github.com/LilDojd/pagers/pull/{{ commit.github.pr_number }}))\
+            {% if commit.remote.pr_number %} \
+                ([#{{ commit.remote.pr_number }}](https://github.com/LilDojd/pagers/pull/{{ commit.remote.pr_number }}))\
             {% endif %}\
     {% endfor %}
 {% endfor %}\n
