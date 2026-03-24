@@ -25,6 +25,8 @@ pub use touch::Touch;
 pub trait Op: Sync {
     const LABEL: &str;
     const MUTATES_RESIDENCY: bool = true;
+    /// Skip all residency checks; the after-state is known to be empty.
+    const SKIP_RESIDENCY: bool = false;
     /// +1 for ops that add pages to cache (touch/lock), -1 for evict, 0 for query.
     const ACTION_SIGN: isize = 0;
 

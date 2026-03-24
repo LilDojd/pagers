@@ -44,28 +44,58 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
             max_len: None,
         };
 
-        match ops::file_info::<PM>(path, &full_file) {
-            Ok(Some(info)) => {
-                let resident = info.residency.count_filled();
-                stats.total_files.fetch_add(1, Ordering::Relaxed);
-                stats
-                    .total_pages
-                    .fetch_add(info.total_pages, Ordering::Relaxed);
-                stats
-                    .initial_pages_in_core
-                    .fetch_add(resident, Ordering::Relaxed);
-                self.sink.send(Event::FileStart {
-                    path: path_str.clone(),
-                    total_pages: info.total_pages,
-                    residency: info.residency,
-                });
-            }
+        let start_info = match ops::file_info::<PM>(path, &full_file) {
+            Ok(Some(info)) => info,
             Ok(None) => return None,
             Err(e) => {
                 tracing::warn!("{}: {e}", path.display());
                 return None;
             }
         };
+
+        let resident = start_info.residency.count_filled();
+        stats.total_files.fetch_add(1, Ordering::Relaxed);
+        stats
+            .total_pages
+            .fetch_add(start_info.total_pages, Ordering::Relaxed);
+        stats
+            .initial_pages_in_core
+            .fetch_add(resident, Ordering::Relaxed);
+        self.sink.send(Event::FileStart {
+            path: path_str.clone(),
+            total_pages: start_info.total_pages,
+            residency: start_info.residency,
+        });
+
+        if O::SKIP_RESIDENCY {
+            let result = match skip_process_file::<O, PM>(op, path, range) {
+                Ok(Some(r)) => r,
+                Ok(None) => return None,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    return None;
+                }
+            };
+
+            let total_action = O::action_pages(
+                result.output_ref(),
+                result.total_pages(),
+                result.pages_in_core_before(),
+                result.pages_in_core_after(),
+            );
+            stats.action_pages.fetch_add(total_action, Ordering::Relaxed);
+
+            self.sink.send(Event::FileDone {
+                path: path_str,
+                pages_in_core: 0,
+                total_pages: start_info.total_pages,
+                residency: PM::from_bools(
+                    std::iter::repeat_n(false, start_info.total_pages),
+                ),
+            });
+
+            return Some(result.into_output());
+        }
 
         let page_offset = range.offset as usize / *crate::pagesize::PAGE_SIZE;
         let reported_action = std::sync::atomic::AtomicUsize::new(0);
@@ -103,7 +133,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
 
         if let Ok(Some(info)) = ops::file_info::<PM>(path, &full_file) {
             self.sink.send(Event::FileDone {
-                path: path.display().to_string(),
+                path: path_str,
                 pages_in_core: info.residency.count_filled(),
                 total_pages: info.total_pages,
                 residency: info.residency,
@@ -128,6 +158,19 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
         range: &FileRange,
         stats: &Stats,
     ) -> Option<O::Output> {
+        if O::SKIP_RESIDENCY {
+            let result = match skip_process_file::<O, PM>(op, path, range) {
+                Ok(Some(r)) => r,
+                Ok(None) => return None,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    return None;
+                }
+            };
+            cli_record_stats::<O>(&result, stats);
+            return Some(result.into_output());
+        }
+
         let result = match counts_process_file::<O, PM>(op, path, range) {
             Ok(Some(r)) => r,
             Ok(None) => return None,
@@ -136,24 +179,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
                 return None;
             }
         };
-
-        let action = O::action_pages(
-            result.output_ref(),
-            result.total_pages(),
-            result.pages_in_core_before(),
-            result.pages_in_core_after(),
-        );
-        let signed_action = action as isize * O::ACTION_SIGN;
-        let initial = (result.pages_in_core_after() as isize - signed_action).max(0) as usize;
-        stats
-            .total_pages
-            .fetch_add(result.total_pages(), Ordering::Relaxed);
-        stats
-            .initial_pages_in_core
-            .fetch_add(initial, Ordering::Relaxed);
-        stats.action_pages.fetch_add(action, Ordering::Relaxed);
-        stats.total_files.fetch_add(1, Ordering::Relaxed);
-
+        cli_record_stats::<O>(&result, stats);
         Some(result.into_output())
     }
 }
@@ -228,6 +254,52 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
         total_pages: pf.total_pages,
         pages_in_core_after,
     }))
+}
+
+pub(crate) fn skip_process_file<O: Op, PM: PageMap + Sync>(
+    op: &O,
+    path: &Path,
+    range: &FileRange,
+) -> crate::Result<Option<ops::SkipResult<O::Output>>> {
+    let Some(pf) = prepare_file(path, range)? else {
+        return Ok(None);
+    };
+
+    let ctx = FileContext {
+        file: &pf.file,
+        path,
+        mmap: std::sync::Arc::clone(&pf.mmap),
+        offset: pf.offset,
+        len: pf.len,
+        on_progress: None,
+        residency: None::<&PM>,
+    };
+
+    let output = op.execute(&ctx)?;
+
+    Ok(Some(ops::SkipResult {
+        output,
+        total_pages: pf.total_pages,
+    }))
+}
+
+fn cli_record_stats<O: Op>(result: &impl FileProcessed<Output = O::Output>, stats: &Stats) {
+    let action = O::action_pages(
+        result.output_ref(),
+        result.total_pages(),
+        result.pages_in_core_before(),
+        result.pages_in_core_after(),
+    );
+    let signed_action = action as isize * O::ACTION_SIGN;
+    let initial = (result.pages_in_core_after() as isize - signed_action).max(0) as usize;
+    stats
+        .total_pages
+        .fetch_add(result.total_pages(), Ordering::Relaxed);
+    stats
+        .initial_pages_in_core
+        .fetch_add(initial, Ordering::Relaxed);
+    stats.action_pages.fetch_add(action, Ordering::Relaxed);
+    stats.total_files.fetch_add(1, Ordering::Relaxed);
 }
 
 #[allow(unused_variables)]

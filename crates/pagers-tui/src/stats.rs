@@ -31,7 +31,7 @@ pub(crate) fn render_summary(
 
     let total_size = total_pages * page_size;
     let action_size = action_pages * page_size;
-    let signed_action = (action_pages as isize) * (action_sign as isize);
+    let signed_action = (action_pages as isize) * action_sign;
     let resident_pages = initial.saturating_add_signed(signed_action);
     let resident_size = resident_pages * page_size;
 

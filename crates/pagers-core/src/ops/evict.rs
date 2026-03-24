@@ -8,6 +8,7 @@ pub struct Evict;
 
 impl Op for Evict {
     const LABEL: &str = "evicted";
+    const SKIP_RESIDENCY: bool = true;
     const ACTION_SIGN: isize = -1;
     type Output = ();
 
