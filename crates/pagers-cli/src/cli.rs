@@ -111,7 +111,7 @@ pub struct CommonArgs {
 
     /// Output format
     #[arg(short = 'o', long, value_enum, default_value_t)]
-    pub output: OutputFormat,
+    pub output: OutputFormatArg,
 }
 
 #[derive(clap::Args, Debug)]
@@ -130,7 +130,7 @@ pub struct LockInner {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub enum OutputFormat {
+pub enum OutputFormatArg {
     /// Human-readable output
     #[default]
     Human,
@@ -140,7 +140,7 @@ pub enum OutputFormat {
     Json,
 }
 
-impl std::fmt::Display for OutputFormat {
+impl std::fmt::Display for OutputFormatArg {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Human => write!(f, "human"),
