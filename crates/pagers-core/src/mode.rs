@@ -87,12 +87,13 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
                 .action_pages
                 .fetch_add(total_action, Ordering::Relaxed);
 
-            self.sink.send(Event::FileDone {
-                path: path_str,
-                pages_in_core: 0,
-                total_pages: start_info.total_pages,
-                residency: PM::from_bools(std::iter::repeat_n(false, start_info.total_pages)),
+            self.sink.send(Event::FileProgress {
+                path: path_str.clone(),
+                page_offset: 0,
+                pages_walked: start_info.total_pages,
+                resident: O::ACTION_SIGN >= 0,
             });
+            self.sink.send(Event::FileDone { path: path_str });
 
             return Some(result.into_output());
         }
@@ -107,6 +108,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
                 path: path_str.clone(),
                 page_offset,
                 pages_walked,
+                resident: O::ACTION_SIGN >= 0,
             });
         };
 
@@ -131,14 +133,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
             .action_pages
             .fetch_add(total_action - reported, Ordering::Relaxed);
 
-        if let Ok(Some(info)) = ops::file_info::<PM>(path, &full_file) {
-            self.sink.send(Event::FileDone {
-                path: path_str,
-                pages_in_core: info.residency.count_filled(),
-                total_pages: info.total_pages,
-                residency: info.residency,
-            });
-        }
+        self.sink.send(Event::FileDone { path: path_str });
 
         Some(result.into_output())
     }

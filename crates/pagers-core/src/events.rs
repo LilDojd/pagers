@@ -19,13 +19,11 @@ pub enum Event<PM = DefaultPageMap> {
         path: String,
         page_offset: usize,
         pages_walked: usize,
+        resident: bool,
     },
     /// File processing complete.
     FileDone {
         path: String,
-        pages_in_core: usize,
-        total_pages: usize,
-        residency: PM,
     },
     AllDone,
 }
