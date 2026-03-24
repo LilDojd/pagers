@@ -39,14 +39,16 @@ where
             match go_daemon(self.args.inner.wait)? {
                 ForkOutcome::Parent => Ok(()),
                 ForkOutcome::Child(notify_fd) => {
-                    let (stats, _, _) =
+                    let (stats, _locks, _) =
                         run_op::<O, PM>(&self.op, self.args.common(), false, self.term)?;
                     hold(&stats, &self.args.inner, self.term, notify_fd);
                     Ok(())
                 }
             }
         } else {
-            run_op::<O, PM>(&self.op, self.args.common(), false, self.term)?;
+            let (stats, _locks, _) =
+                run_op::<O, PM>(&self.op, self.args.common(), true, self.term)?;
+            hold(&stats, &self.args.inner, self.term, None);
             Ok(())
         }
     }
