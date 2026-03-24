@@ -19,7 +19,8 @@ echo "Preparing ${TAG}..."
 # check for typos
 typos || true
 
-# update the version in all crate Cargo.toml files
+# update the version in all Cargo.toml files
+sed -i -E "s/^version = \"[^\"]+\"/version = \"${VERSION}\"/" Cargo.toml
 for toml in crates/*/Cargo.toml; do
 	sed -i -E "s/^version = \"[^\"]+\"/version = \"${VERSION}\"/" "$toml"
 done

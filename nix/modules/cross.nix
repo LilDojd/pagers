@@ -22,8 +22,8 @@
         in
         craneLib.buildPackage {
           inherit src;
+          inherit (craneLib.crateNameFromCargoToml { cargoToml = self + /Cargo.toml; }) version;
           pname = "pagers";
-          version = "0.1.0";
           strictDeps = true;
 
           CARGO_BUILD_TARGET = target;

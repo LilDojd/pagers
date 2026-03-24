@@ -1,3 +1,17 @@
+ci:
+  default:
+    root:
+      dir: "."
+      steps:
+        build:
+          enable: true
+        custom:
+          cargo-doc:
+            type: devshell
+            command: ["cargo", "doc", "--no-deps", "--workspace"]
+          check-closure-size:
+            type: app
+            name: check-closure-size
 health:
   default:
     direnv:

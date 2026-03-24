@@ -29,6 +29,7 @@
     in
     {
       devShells.default = devShell {
+        meta.description = "Development shell for pagers";
         inputsFrom = [
           self'.packages.pagers
           config.pre-commit.devShell
@@ -50,6 +51,7 @@
             samply
             git-cliff
             typos
+            inputs.omnix.packages.${system}.default
           ]
           ++ lib.optionals pkgs.stdenv.isLinux [
             perf

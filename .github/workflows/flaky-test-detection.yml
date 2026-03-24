@@ -40,5 +40,4 @@ jobs:
         uses: mergifyio/gha-mergify-ci@v14
         with:
           token: ${{ secrets.MERGIFY_TOKEN }}
-          flaky_test_detection: true
           report_path: "junit-test-*.xml"

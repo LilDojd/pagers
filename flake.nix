@@ -13,6 +13,8 @@
     git-hooks.flake = false;
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
+    omnix.url = "github:juspay/omnix";
+    omnix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = inputs:

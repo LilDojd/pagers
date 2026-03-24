@@ -11,10 +11,11 @@
 
       src = craneLib.cleanCargoSource self;
 
+      inherit (craneLib.crateNameFromCargoToml { cargoToml = self + /Cargo.toml; }) version;
+
       commonArgs = {
-        inherit src;
+        inherit src version;
         pname = "pagers";
-        version = "0.1.0";
         strictDeps = true;
 
         nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [
@@ -31,6 +32,7 @@
 
       pagers = craneLib.buildPackage (commonArgs // {
         inherit cargoArtifacts;
+        meta.description = "A tool for monitoring page cache usage";
       });
     in
     {
@@ -41,10 +43,12 @@
         pagers-clippy = craneLib.cargoClippy (commonArgs // {
           inherit cargoArtifacts;
           cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+          meta.description = "Run clippy lints on the workspace";
         });
 
         pagers-nextest = craneLib.cargoNextest (commonArgs // {
           inherit cargoArtifacts;
+          meta.description = "Run tests with cargo-nextest";
         });
       };
     };

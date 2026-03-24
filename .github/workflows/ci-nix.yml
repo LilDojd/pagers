@@ -11,17 +11,34 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
+  configure:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - name: Install omnix
+        run: nix --accept-flake-config profile install "github:juspay/omnix"
+      - id: set-matrix
+        run: |
+          MATRIX="$(om ci gh-matrix --systems=x86_64-linux,aarch64-darwin | jq -c .)"
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  nix:
+    needs: configure
+    runs-on: ${{ matrix.system == 'x86_64-linux' && 'ubuntu-latest' || 'macos-14' }}
     strategy:
-      matrix:
-        os: [ubuntu-latest, macos-14]
+      fail-fast: false
+      matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: DeterminateSystems/flakehub-cache-action@v3
-      - run: nix flake check
-      - run: nix build
+      - name: Install omnix
+        run: nix --accept-flake-config profile install "github:juspay/omnix"
+      - name: Omnix CI
+        run: om ci run --systems "${{ matrix.system }}"
 
   cross:
     name: cross (${{ matrix.target }})
