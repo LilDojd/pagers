@@ -61,8 +61,10 @@ impl<PM: PageMap> App<PM> {
                     let start = page_offset;
                     let end = (page_offset + pages_walked).min(file.residency.len());
                     if start < end {
+                        let was_set = file.residency[start..end].count_filled();
                         file.residency[start..end].fill(resident);
-                        file.pages_in_core = file.residency.count_filled();
+                        let now_set = if resident { end - start } else { 0 };
+                        file.pages_in_core = file.pages_in_core - was_set + now_set;
                     }
                 }
                 ControlFlow::Continue
