@@ -112,6 +112,11 @@ pub struct CommonArgs {
     /// Output format
     #[arg(short = 'o', long, value_enum, default_value_t)]
     pub output: OutputFormatArg,
+
+    /// Number of threads (0 = all cores)
+    #[cfg(feature = "rayon")]
+    #[arg(short = 'j', long, default_value_t = 0)]
+    pub threads: u16,
 }
 
 #[derive(clap::Args, Debug)]

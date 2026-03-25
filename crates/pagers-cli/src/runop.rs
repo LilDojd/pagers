@@ -98,7 +98,7 @@ fn common_setup(
         batch,
         nul_delim: common.nul_delim,
         #[cfg(feature = "rayon")]
-        threads: crawl::Threads::default(),
+        threads: common.threads.into(),
     };
 
     Ok((range, extra_paths, crawl_config))
