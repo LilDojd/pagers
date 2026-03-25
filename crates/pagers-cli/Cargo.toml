@@ -16,9 +16,14 @@ name = "pagers"
 path = "src/main.rs"
 
 [features]
-default = ["bitvec", "rayon"]
+default = ["bitvec", "rayon", "log-max-level-info"]
 bitvec = ["pagers-core/bitvec", "pagers-tui/bitvec"]
 rayon = ["pagers-core/rayon"]
+log-max-level-info = [
+  "tracing/max_level_info",
+  "pagers-core/log-max-level-info",
+]
+debug = []
 
 [dependencies]
 anstyle = "1.0.14"
