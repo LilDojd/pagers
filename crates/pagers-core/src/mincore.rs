@@ -162,14 +162,21 @@ mod bitvec_impl {
 
         fn from_residency_bytes(bytes: Vec<u8>) -> Self {
             let len = bytes.len();
+            let word_bytes = std::mem::size_of::<usize>();
             let bits_per_word = usize::BITS as usize;
+
             let packed: Vec<usize> = bytes
                 .chunks(bits_per_word)
                 .map(|chunk| {
-                    chunk
-                        .iter()
-                        .enumerate()
-                        .fold(0usize, |acc, (i, &b)| acc | (((b != 0) as usize) << i))
+                    let mut buf = [0u8; std::mem::size_of::<usize>()];
+                    for (byte_pos, sub) in chunk.chunks(8).enumerate().take(word_bytes) {
+                        let mut packed_byte = 0u8;
+                        for (bit, &b) in sub.iter().enumerate() {
+                            packed_byte |= ((b != 0) as u8) << bit;
+                        }
+                        buf[byte_pos] = packed_byte;
+                    }
+                    usize::from_le_bytes(buf)
                 })
                 .collect();
             let mut bv = BitVec::from_vec(packed);
