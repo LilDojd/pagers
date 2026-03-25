@@ -37,7 +37,7 @@ pub(crate) enum Error {
 fn main() -> ExitCode {
     let cli = cli::Cli::parse();
     let output = cli.command.output();
-    if output.format.is_some() && !output.is_quiet() {
+    if output.format.is_some() || output.is_quiet() {
         tracing::init(&output.verbosity);
     }
 
@@ -78,9 +78,10 @@ where
 {
     let quiet = a.output.is_quiet();
     let cmd = C::new(op, a.common(), term, a.output.format, quiet, None);
-    match a.output.format {
-        Some(_) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
-        None => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
+    if a.output.format.is_some() || quiet {
+        Run::<mode::NoDaemon, mode::CliMode>::run(cmd)
+    } else {
+        Run::<mode::NoDaemon, mode::TuiMode>::run(cmd)
     }
 }
 
@@ -93,10 +94,11 @@ where
     O::Output: 'static,
 {
     let quiet = a.output.is_quiet();
+    let use_cli = a.output.format.is_some() || quiet;
     let cmd = C::new(op, a.common(), term, a.output.format, quiet, Some(&a.inner));
-    match (a.inner.daemon, a.output.format.is_some()) {
+    match (a.inner.daemon, use_cli) {
         (true, _) => Run::<mode::Daemon, mode::CliMode>::run(cmd),
-        (false, true) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
+        (_, true) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
         (false, false) => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
     }
 }
