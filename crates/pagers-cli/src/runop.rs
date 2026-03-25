@@ -22,7 +22,8 @@ pub(crate) struct SimpleCmd<'a, O, PM: PageMap = DefaultPageMap> {
     _phantom: std::marker::PhantomData<PM>,
 }
 
-impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> SimpleCmd<'a, O, PM>
+impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
+    SimpleCmd<'a, O, PM>
 where
     O::Output: 'static,
 {
@@ -36,7 +37,8 @@ where
     }
 }
 
-impl<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> Run for SimpleCmd<'_, O, PM>
+impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static> Run
+    for SimpleCmd<'_, O, PM>
 where
     O::Output: 'static,
 {
@@ -100,7 +102,7 @@ fn common_setup(
     Ok((range, extra_paths, crawl_config))
 }
 
-pub(crate) fn run_tui<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
+pub(crate) fn run_tui<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>(
     op: &O,
     common: &CommonArgs,
     term: &Arc<AtomicBool>,

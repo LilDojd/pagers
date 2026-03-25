@@ -7,7 +7,7 @@ use ignore::WalkBuilder;
 use crate::mincore::PageMap;
 use crate::mode::DisplayMode;
 use crate::ops::{FileRange, Op, Stats};
-use crate::par::{InodeSet, SeenInodes as _, par_collect};
+use crate::par::{InodeSet, SeenInodes as _};
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -31,18 +31,77 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     display: &D,
 ) -> crate::Result<Vec<O::Output>> {
     let seen_inodes = InodeSet::default();
-    let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
 
-    let outputs = par_collect(&file_paths, |path| {
-        display.process_one::<O>(op, path, range, stats)
-    });
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
 
-    display.finish();
-    op.finish()?;
+        let buf = std::thread::available_parallelism().map_or(16, |n| n.get() * 4);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<PathBuf>(buf);
 
-    Ok(outputs)
+        let outputs = rayon::scope(|s| {
+            s.spawn(|_| {
+                collect_file_paths_streaming(paths, crawl_config, &seen_inodes, stats, tx);
+            });
+
+            rx.into_iter()
+                .par_bridge()
+                .filter_map(|path| display.process_one::<O>(op, &path, range, stats))
+                .collect::<Vec<_>>()
+        });
+
+        display.finish();
+        op.finish()?;
+        Ok(outputs)
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    {
+        let file_paths = collect_file_paths(paths, crawl_config, &seen_inodes, stats);
+        let outputs = file_paths
+            .iter()
+            .filter_map(|path| display.process_one::<O>(op, path, range, stats))
+            .collect();
+        display.finish();
+        op.finish()?;
+        Ok(outputs)
+    }
 }
 
+#[cfg(feature = "rayon")]
+fn collect_file_paths_streaming(
+    paths: &[PathBuf],
+    crawl_config: &CrawlConfig,
+    seen_inodes: &InodeSet,
+    stats: &Stats,
+    tx: std::sync::mpsc::SyncSender<PathBuf>,
+) {
+    let mut all_paths: Vec<PathBuf> = paths.to_vec();
+
+    if let Some(batch_path) = &crawl_config.batch {
+        match read_batch_paths(batch_path, crawl_config.nul_delim) {
+            Ok(batch_paths) => all_paths.extend(batch_paths),
+            Err(e) => tracing::warn!("batch file: {e}"),
+        }
+    }
+
+    let needs_meta = crawl_config.max_file_size.is_some() || !crawl_config.count_hardlinks;
+
+    for path in &all_paths {
+        if path.is_dir() {
+            stats.total_dirs.fetch_add(1, Ordering::Relaxed);
+            walk_dir_entries(path, crawl_config, needs_meta, seen_inodes, |p| {
+                let _ = tx.send(p);
+            });
+        } else if path.is_file() {
+            let _ = tx.send(path.clone());
+        } else {
+            tracing::warn!("skipping {}: not a file or directory", path.display());
+        }
+    }
+}
+
+#[cfg(not(feature = "rayon"))]
 fn collect_file_paths(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
@@ -64,7 +123,9 @@ fn collect_file_paths(
     for path in &all_paths {
         if path.is_dir() {
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
-            collect_dir_entries(path, crawl_config, needs_meta, seen_inodes, &mut file_paths);
+            walk_dir_entries(path, crawl_config, needs_meta, seen_inodes, |p| {
+                file_paths.push(p);
+            });
         } else if path.is_file() {
             file_paths.push(path.clone());
         } else {
@@ -75,12 +136,12 @@ fn collect_file_paths(
     file_paths
 }
 
-fn collect_dir_entries(
+fn walk_dir_entries(
     root: &Path,
     config: &CrawlConfig,
     needs_meta: bool,
     seen_inodes: &InodeSet,
-    out: &mut Vec<PathBuf>,
+    mut emit: impl FnMut(PathBuf),
 ) {
     let mut builder = WalkBuilder::new(root);
     builder
@@ -144,7 +205,7 @@ fn collect_dir_entries(
             }
         }
 
-        out.push(entry_path.to_path_buf());
+        emit(entry_path.to_path_buf());
     }
 }
 

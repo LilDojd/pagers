@@ -4,7 +4,10 @@ use std::sync::mpsc::Sender;
 
 use crate::events::{Event, EventSink};
 use crate::mincore::{DefaultPageMap, PageMap};
-use crate::ops::{self, FileContext, FileProcessed, FileRange, Op, Stats, prepare_file};
+use crate::ops::{
+    self, FileContext, FileProcessed, FileRange, Op, Stats, continue_full_process,
+    continue_skip_process, prepare_file, prepare_with_residency,
+};
 
 pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
     fn process_one<O: Op>(
@@ -30,7 +33,7 @@ impl<PM: PageMap> Tui<PM> {
     }
 }
 
-impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
+impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
     fn process_one<O: Op>(
         &self,
         op: &O,
@@ -44,8 +47,8 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
             max_len: None,
         };
 
-        let start_info = match ops::file_info::<PM>(path, &full_file) {
-            Ok(Some(info)) => info,
+        let prep = match prepare_with_residency::<PM>(path, &full_file) {
+            Ok(Some(p)) => p,
             Ok(None) => return None,
             Err(e) => {
                 tracing::warn!("{}: {e}", path.display());
@@ -53,27 +56,38 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
             }
         };
 
-        let resident = start_info.residency.count_filled();
         stats.total_files.fetch_add(1, Ordering::Relaxed);
         stats
             .total_pages
-            .fetch_add(start_info.total_pages, Ordering::Relaxed);
+            .fetch_add(prep.pf.total_pages, Ordering::Relaxed);
         stats
             .initial_pages_in_core
-            .fetch_add(resident, Ordering::Relaxed);
+            .fetch_add(prep.pages_in_core, Ordering::Relaxed);
         self.sink.send(Event::FileStart {
             path: path_str.clone(),
-            total_pages: start_info.total_pages,
-            residency: start_info.residency,
+            total_pages: prep.pf.total_pages,
+            residency: prep.residency.clone(),
         });
 
         if O::SKIP_RESIDENCY {
-            let result = match skip_process_file::<O, PM>(op, path, range) {
-                Ok(Some(r)) => r,
-                Ok(None) => return None,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    return None;
+            let total_pages = prep.pf.total_pages;
+            let has_range = range.offset != 0 || range.max_len.is_some();
+            let result = if has_range {
+                match skip_process_file::<O, PM>(op, path, range) {
+                    Ok(Some(r)) => r,
+                    Ok(None) => return None,
+                    Err(e) => {
+                        tracing::warn!("{e}");
+                        return None;
+                    }
+                }
+            } else {
+                match continue_skip_process::<O, PM>(op, path, prep.pf) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("{e}");
+                        return None;
+                    }
                 }
             };
 
@@ -90,7 +104,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
             self.sink.send(Event::FileProgress {
                 path: path_str.clone(),
                 page_offset: 0,
-                pages_walked: start_info.total_pages,
+                pages_walked: total_pages,
                 resident: O::ACTION_SIGN >= 0,
             });
             self.sink.send(Event::FileDone { path: path_str });
@@ -112,12 +126,30 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Tui<PM> {
             });
         };
 
-        let result = match full_process_file::<O, PM>(op, path, range, Some(&on_progress)) {
-            Ok(Some(r)) => r,
-            Ok(None) => return None,
-            Err(e) => {
-                tracing::warn!("{e}");
-                return None;
+        let has_range = range.offset != 0 || range.max_len.is_some();
+        let result = if has_range {
+            match full_process_file::<O, PM>(op, path, range, Some(&on_progress)) {
+                Ok(Some(r)) => r,
+                Ok(None) => return None,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    return None;
+                }
+            }
+        } else {
+            match continue_full_process::<O, PM>(
+                op,
+                path,
+                prep.pf,
+                prep.residency,
+                prep.pages_in_core,
+                Some(&on_progress),
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    return None;
+                }
             }
         };
 

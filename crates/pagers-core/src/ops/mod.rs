@@ -17,8 +17,10 @@ use crate::mincore::{DefaultPageMap, PageMap};
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
 pub use lockall::Lockall;
-pub(crate) use process::prepare_file;
 pub use process::{CountsResult, FileProcessed, FullResult, SkipResult, file_info};
+pub(crate) use process::{
+    continue_full_process, continue_skip_process, prepare_file, prepare_with_residency,
+};
 pub use query::Query;
 pub use touch::Touch;
 

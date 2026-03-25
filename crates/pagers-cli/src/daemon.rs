@@ -17,7 +17,8 @@ pub(crate) struct DaemonCmd<'a, O, PM: PageMap = DefaultPageMap> {
     _phantom: std::marker::PhantomData<PM>,
 }
 
-impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> DaemonCmd<'a, O, PM>
+impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
+    DaemonCmd<'a, O, PM>
 where
     O::Output: 'static,
 {
@@ -31,7 +32,8 @@ where
     }
 }
 
-impl<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static> Run for DaemonCmd<'_, O, PM>
+impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static> Run
+    for DaemonCmd<'_, O, PM>
 where
     O::Output: 'static,
 {
