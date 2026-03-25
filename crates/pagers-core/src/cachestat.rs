@@ -8,7 +8,7 @@ pub static SUPPORTED: LazyLock<bool> = LazyLock::new(probe_support);
 fn probe_support() -> bool {
     use nix::errno::Errno;
 
-    let mut cs = Cachestat::zeroed();
+    let mut cs = Cachestat::default();
     let range = CachestatRange { off: 0, len: 0 };
     // SAFETY: repr(C) structs on the stack, invalid fd — no side effects.
     let ret = unsafe {
@@ -46,6 +46,7 @@ mod internals {
         pub len: u64,
     }
 
+    #[derive(Default)]
     #[repr(C)]
     pub struct Cachestat {
         pub nr_cache: u64,
@@ -53,18 +54,6 @@ mod internals {
         pub nr_writeback: u64,
         pub nr_evicted: u64,
         pub nr_recently_evicted: u64,
-    }
-
-    impl Cachestat {
-        pub fn zeroed() -> Self {
-            Self {
-                nr_cache: 0,
-                nr_dirty: 0,
-                nr_writeback: 0,
-                nr_evicted: 0,
-                nr_recently_evicted: 0,
-            }
-        }
     }
 }
 
@@ -78,7 +67,7 @@ pub fn cached_pages(
     use std::os::unix::io::AsRawFd;
 
     let range = CachestatRange { off: offset, len };
-    let mut cs = Cachestat::zeroed();
+    let mut cs = Cachestat::default();
     // SAFETY: repr(C) structs on the stack, valid fd from caller.
     let ret = unsafe {
         libc::syscall(
