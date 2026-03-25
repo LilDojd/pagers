@@ -34,14 +34,17 @@ pub(crate) fn spawn_event_threads<PM: Send + 'static>(
         while !key_term.load(Ordering::Relaxed) {
             if crossterm::event::poll(Duration::from_millis(100)).unwrap_or(false)
                 && let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
-                && key.code == crossterm::event::KeyCode::Char('c')
-                && key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL)
             {
-                key_term.store(true, Ordering::Relaxed);
-                let _ = key_tx.send(TuiEvent::Quit);
-                return;
+                let is_quit = key.code == crossterm::event::KeyCode::Char('q')
+                    || (key.code == crossterm::event::KeyCode::Char('c')
+                        && key
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL));
+                if is_quit {
+                    key_term.store(true, Ordering::Relaxed);
+                    let _ = key_tx.send(TuiEvent::Quit);
+                    return;
+                }
             }
         }
     });
