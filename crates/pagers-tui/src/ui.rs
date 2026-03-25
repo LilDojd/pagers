@@ -1,6 +1,8 @@
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::Widget;
 
 use pagers_core::mincore::PageMap;
 
@@ -16,56 +18,45 @@ pub(crate) fn layout(file_rows: u16, area: Rect) -> [Rect; 2] {
     .areas(area)
 }
 
-pub(crate) fn render_refs_to_buf<PM: PageMap>(
-    files: &[&FileState<PM>],
-    max_rows: u16,
-    area: ratatui::layout::Rect,
-    buf: &mut ratatui::buffer::Buffer,
-) {
-    if files.is_empty() {
-        return;
-    }
-    let visible = &files[..files.len().min(max_rows as usize)];
-    let constraints: Vec<Constraint> = visible.iter().map(|_| Constraint::Length(1)).collect();
-    let areas = Layout::vertical(constraints).split(area);
-    for (i, file) in visible.iter().enumerate() {
-        render_file_row_to_buf(file, areas[i], buf);
+pub(crate) struct FileListWidget<'a, PM: PageMap> {
+    pub files: &'a [&'a FileState<PM>],
+    pub max_rows: u16,
+}
+
+impl<PM: PageMap> Widget for FileListWidget<'_, PM> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if self.files.is_empty() {
+            return;
+        }
+        let visible = &self.files[..self.files.len().min(self.max_rows as usize)];
+        let constraints: Vec<Constraint> = visible.iter().map(|_| Constraint::Length(1)).collect();
+        let areas = Layout::vertical(constraints).split(area);
+        for (i, file) in visible.iter().enumerate() {
+            FileRowWidget { file }.render(areas[i], buf);
+        }
     }
 }
 
-pub(crate) fn render_file_row_to_buf<PM: PageMap>(
-    file: &FileState<PM>,
-    area: ratatui::layout::Rect,
-    buf: &mut ratatui::buffer::Buffer,
-) {
-    use ratatui::widgets::Widget;
+struct FileRowWidget<'a, PM: PageMap> {
+    file: &'a FileState<PM>,
+}
 
-    let fully_loaded = file.total_pages > 0 && file.pages_in_core == file.total_pages;
-    let counter = format!(" {}/{}", file.pages_in_core, file.total_pages);
+impl<PM: PageMap> FileRowWidget<'_, PM> {
+    fn status_and_style(&self) -> (&'static str, Style) {
+        let fully_loaded =
+            self.file.total_pages > 0 && self.file.pages_in_core == self.file.total_pages;
+        if self.file.done && fully_loaded {
+            ("\u{2713} ", Style::default().fg(Color::Green))
+        } else if !self.file.done {
+            ("  ", Style::default().fg(Color::Cyan))
+        } else {
+            ("  ", Style::default())
+        }
+    }
 
-    let (status, cached_style) = if file.done && fully_loaded {
-        ("\u{2713} ", Style::default().fg(Color::Green))
-    } else if !file.done {
-        ("  ", Style::default().fg(Color::Cyan))
-    } else {
-        ("  ", Style::default())
-    };
-
-    // Map width scales with total_pages, capped at 20
-    let map_inner = file.total_pages.min(MAX_DISPLAY_PAGES);
-    // brackets + space before map
-    let map_chars = if map_inner > 0 { map_inner + 3 } else { 0 };
-    let path_budget = (area.width as usize).saturating_sub(2 + map_chars + counter.len());
-    let display_path = truncate_path(&file.path, path_budget);
-
-    let mut spans = vec![
-        Span::styled(status, cached_style),
-        Span::styled(display_path, cached_style),
-    ];
-
-    if map_inner > 0 {
-        let buckets = file.bucketize(map_inner);
-        spans.push(Span::raw(" "));
+    fn histogram_spans(&self, width: usize, style: Style) -> Vec<Span<'static>> {
+        let buckets = self.file.bucketize(width);
+        let mut spans = Vec::with_capacity(width + 2);
         spans.push(Span::styled("[", Style::default().fg(Color::DarkGray)));
         for &(cached, total) in &buckets {
             let ratio = if total == 0 {
@@ -73,26 +64,48 @@ pub(crate) fn render_file_row_to_buf<PM: PageMap>(
             } else {
                 cached as f64 / total as f64
             };
-            let (ch, style) = match ratio {
-                r if r >= 1.0 => ("#", cached_style),
-                r if r >= 0.75 => ("+", cached_style),
+            let (ch, s) = match ratio {
+                r if r >= 1.0 => ("#", style),
+                r if r >= 0.75 => ("+", style),
                 r if r >= 0.50 => ("=", Style::default().fg(Color::Cyan)),
                 r if r >= 0.25 => ("-", Style::default().fg(Color::DarkGray)),
                 r if r > 0.0 => (".", Style::default().fg(Color::DarkGray)),
                 _ => (" ", Style::default()),
             };
-            spans.push(Span::styled(ch, style));
+            spans.push(Span::styled(ch, s));
         }
         spans.push(Span::styled("]", Style::default().fg(Color::DarkGray)));
+        spans
     }
-
-    spans.push(Span::styled(counter, Style::default().fg(Color::DarkGray)));
-
-    Line::from(spans).render(area, buf);
 }
 
-/// Truncate a path to fit within `max_width`, using a leading ellipsis if needed.
-pub(crate) fn truncate_path(path: &str, max_width: usize) -> String {
+impl<PM: PageMap> Widget for FileRowWidget<'_, PM> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let (status, cached_style) = self.status_and_style();
+        let counter = format!(" {}/{}", self.file.pages_in_core, self.file.total_pages);
+
+        let map_inner = self.file.total_pages.min(MAX_DISPLAY_PAGES);
+        let map_chars = if map_inner > 0 { map_inner + 3 } else { 0 };
+        let path_budget = (area.width as usize).saturating_sub(2 + map_chars + counter.len());
+        let display_path = truncate_path(&self.file.path, path_budget);
+
+        let mut spans = vec![
+            Span::styled(status, cached_style),
+            Span::styled(display_path, cached_style),
+        ];
+
+        if map_inner > 0 {
+            spans.push(Span::raw(" "));
+            spans.extend(self.histogram_spans(map_inner, cached_style));
+        }
+
+        spans.push(Span::styled(counter, Style::default().fg(Color::DarkGray)));
+
+        Line::from(spans).render(area, buf);
+    }
+}
+
+fn truncate_path(path: &str, max_width: usize) -> String {
     let char_count = path.chars().count();
     if char_count <= max_width {
         return path.to_string();
@@ -111,7 +124,6 @@ mod tests {
     use bitvec::prelude::Lsb0;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::buffer::Buffer;
 
     fn buffer_to_string(buf: &Buffer) -> String {
         let mut s = String::new();
@@ -124,15 +136,32 @@ mod tests {
         s
     }
 
+    fn render_file_list(files: &[&FileState], max_rows: u16, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                FileListWidget { files, max_rows }.render(frame.area(), frame.buffer_mut())
+            })
+            .unwrap();
+        buffer_to_string(terminal.backend().buffer())
+    }
+
+    fn render_single_file(file: &FileState, width: u16) -> String {
+        let backend = TestBackend::new(width, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                FileRowWidget { file }.render(frame.area(), frame.buffer_mut())
+            })
+            .unwrap();
+        buffer_to_string(terminal.backend().buffer())
+    }
+
     #[test]
     fn test_render_empty_is_blank() {
-        let backend = TestBackend::new(60, 4);
-        let mut terminal = Terminal::new(backend).unwrap();
         let files: Vec<&FileState> = vec![];
-        terminal
-            .draw(|frame| render_refs_to_buf(&files, 4, frame.area(), frame.buffer_mut()))
-            .unwrap();
-        let content = buffer_to_string(terminal.backend().buffer());
+        let content = render_file_list(&files, 4, 60, 4);
         assert!(content.trim().is_empty());
     }
 
@@ -149,13 +178,7 @@ mod tests {
             },
             done: false,
         };
-        let files: Vec<&FileState> = vec![&file];
-        let backend = TestBackend::new(80, 4);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_refs_to_buf(&files, 4, frame.area(), frame.buffer_mut()))
-            .unwrap();
-        let content = buffer_to_string(terminal.backend().buffer());
+        let content = render_file_list(&[&file], 4, 80, 4);
         assert!(content.contains("test.bin"));
         assert!(content.contains("75/100"));
         assert!(content.contains('['));
@@ -168,7 +191,7 @@ mod tests {
             path: "/high.bin".into(),
             total_pages: 100,
             pages_in_core: 90,
-            residency: bitvec::bitvec![1; 100], // simplified
+            residency: bitvec::bitvec![1; 100],
             done: false,
         };
         let low = FileState {
@@ -183,7 +206,13 @@ mod tests {
         let backend = TestBackend::new(80, 4);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_refs_to_buf(&files, 4, frame.area(), frame.buffer_mut()))
+            .draw(|frame| {
+                FileListWidget {
+                    files: &files,
+                    max_rows: 4,
+                }
+                .render(frame.area(), frame.buffer_mut())
+            })
             .unwrap();
         let buf = terminal.backend().buffer().clone();
         let row0: String = (0..buf.area.width)
@@ -221,12 +250,7 @@ mod tests {
             residency: bitvec::bitvec![1; 100],
             done: true,
         };
-        let backend = TestBackend::new(80, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_file_row_to_buf(&file, frame.area(), frame.buffer_mut()))
-            .unwrap();
-        let content = buffer_to_string(terminal.backend().buffer());
+        let content = render_single_file(&file, 80);
         assert!(content.contains("\u{2713}"), "expected checkmark in output");
     }
 
@@ -243,7 +267,6 @@ mod tests {
 
     #[test]
     fn test_page_map_shows_cached_regions() {
-        // First half cached, second half not
         let mut residency = bitvec::bitvec![1; 50];
         residency.extend(bitvec::bitvec![0; 50]);
         let file = FileState {
@@ -253,13 +276,7 @@ mod tests {
             residency,
             done: false,
         };
-        let backend = TestBackend::new(80, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_file_row_to_buf(&file, frame.area(), frame.buffer_mut()))
-            .unwrap();
-        let content = buffer_to_string(terminal.backend().buffer());
-        // Should contain bar chars for cached region and spaces for uncached
+        let content = render_single_file(&file, 80);
         assert!(content.contains('#') || content.contains('+'));
         assert!(content.contains("50/100"));
     }
@@ -275,7 +292,6 @@ mod tests {
         };
         let buckets = file.bucketize(5);
         assert_eq!(buckets.len(), 5);
-        // First 2-3 buckets should be fully cached, rest not
         assert_eq!(buckets[0], (2, 2));
         assert_eq!(buckets[1], (2, 2));
         assert_eq!(buckets[2], (1, 2));

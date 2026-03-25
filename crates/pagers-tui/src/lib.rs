@@ -19,6 +19,7 @@ use pagers_core::mincore::PageMap;
 use pagers_core::ops::Stats;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::widgets::Widget;
 use ratatui::{TerminalOptions, Viewport};
 
 const MAX_DISPLAY_FILES: u16 = 8;
@@ -103,15 +104,15 @@ pub fn run<PM: PageMap + Send + 'static>(
         file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
         guard.terminal.draw(|frame| {
             let [files_area, stats_area] = ui::layout(file_rows_hwm, frame.area());
-            ui::render_refs_to_buf(&files, file_rows_hwm, files_area, frame.buffer_mut());
-            stats::render_summary(
-                &core_stats,
+            ui::FileListWidget { files: &files, max_rows: file_rows_hwm }
+                .render(files_area, frame.buffer_mut());
+            stats::SummaryWidget {
+                stats: &core_stats,
                 elapsed,
                 label,
                 action_sign,
-                stats_area,
-                frame.buffer_mut(),
-            );
+            }
+            .render(stats_area, frame.buffer_mut());
         })?;
 
         if done || quit {
@@ -131,8 +132,15 @@ pub fn run<PM: PageMap + Send + 'static>(
 
         let _ = guard.terminal.insert_before(total_lines, |buf| {
             let [files_area, stats_area] = ui::layout(file_rows_hwm, buf.area);
-            ui::render_refs_to_buf(&files, file_rows_hwm, files_area, buf);
-            stats::render_summary(&core_stats, elapsed, label, action_sign, stats_area, buf);
+            ui::FileListWidget { files: &files, max_rows: file_rows_hwm }
+                .render(files_area, buf);
+            stats::SummaryWidget {
+                stats: &core_stats,
+                elapsed,
+                label,
+                action_sign,
+            }
+            .render(stats_area, buf);
         });
     }
 
