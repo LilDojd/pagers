@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use memmap2::MmapOptions;
 
-use super::{FileContext, FileInfo, FileRange, Op};
+use super::{FileInfo, FileRange};
 use crate::Error;
 use crate::mincore::PageMap;
 
@@ -180,86 +180,6 @@ pub fn file_info<PM: PageMap>(
     }))
 }
 
-pub(crate) struct PreparedWithResidency<PM> {
-    pub pf: PreparedFile,
-    pub residency: PM,
-    pub pages_in_core: usize,
-}
-
-pub(crate) fn prepare_with_residency<PM: PageMap>(
-    path: &Path,
-    range: &FileRange,
-) -> crate::Result<Option<PreparedWithResidency<PM>>> {
-    let Some(pf) = prepare_file(path, range)? else {
-        return Ok(None);
-    };
-    let residency: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
-    let pages_in_core = residency.count_filled();
-    Ok(Some(PreparedWithResidency {
-        pf,
-        residency,
-        pages_in_core,
-    }))
-}
-
-pub(crate) fn continue_full_process<O: Op, PM: PageMap + Sync>(
-    op: &O,
-    path: &Path,
-    pf: PreparedFile,
-    residency_before: PM,
-    pages_in_core_before: usize,
-    on_progress: Option<&(dyn Fn(usize, usize) + Sync)>,
-) -> crate::Result<FullResult<O::Output, PM>> {
-    let ctx = FileContext {
-        file: &pf.file,
-        path,
-        mmap: Arc::clone(&pf.mmap),
-        offset: pf.offset,
-        len: pf.len,
-        on_progress,
-        residency: Some(&residency_before),
-    };
-    let output = op.execute(&ctx)?;
-
-    let (pages_in_core_after, res_before, res_after) = if O::MUTATES_RESIDENCY {
-        let res: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
-        let count = res.count_filled();
-        (count, Some(residency_before), Some(res))
-    } else {
-        (pages_in_core_before, None, Some(residency_before))
-    };
-
-    Ok(FullResult {
-        output,
-        total_pages: pf.total_pages,
-        pages_in_core_before,
-        pages_in_core_after,
-        residency_before: res_before,
-        residency_after: res_after,
-    })
-}
-
-pub(crate) fn continue_skip_process<O: Op, PM: PageMap + Sync>(
-    op: &O,
-    path: &Path,
-    pf: PreparedFile,
-) -> crate::Result<SkipResult<O::Output>> {
-    let ctx = FileContext {
-        file: &pf.file,
-        path,
-        mmap: Arc::clone(&pf.mmap),
-        offset: pf.offset,
-        len: pf.len,
-        on_progress: None,
-        residency: None::<&PM>,
-    };
-    let output = op.execute(&ctx)?;
-    Ok(SkipResult {
-        output,
-        total_pages: pf.total_pages,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use crate::mincore::PageMapSlice as _;
@@ -382,7 +302,7 @@ mod tests {
                         max_len: None,
                     };
                     let result: FullResult<(), $t> =
-                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None)
+                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None, None)
                             .unwrap()
                             .unwrap();
                     assert!(result.residency_after.is_some());
@@ -397,7 +317,7 @@ mod tests {
                         max_len: None,
                     };
                     let result: FullResult<(), $t> =
-                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None)
+                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None, None)
                             .unwrap()
                             .unwrap();
                     assert_eq!(result.pages_in_core_before, result.pages_in_core_after);

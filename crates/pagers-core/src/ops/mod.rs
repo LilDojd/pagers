@@ -18,9 +18,7 @@ pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
 pub use lockall::Lockall;
 pub use process::{CountsResult, FileProcessed, FullResult, SkipResult, file_info};
-pub(crate) use process::{
-    continue_full_process, continue_skip_process, prepare_file, prepare_with_residency,
-};
+pub(crate) use process::{PreparedFile, prepare_file};
 pub use query::Query;
 pub use touch::Touch;
 
@@ -75,6 +73,12 @@ impl<PM: PageMap> std::fmt::Debug for FileContext<'_, PM> {
 pub struct FileRange {
     pub offset: u64,
     pub max_len: Option<u64>,
+}
+
+impl FileRange {
+    pub fn is_full_file(&self) -> bool {
+        self.offset == 0 && self.max_len.is_none()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

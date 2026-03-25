@@ -5,8 +5,7 @@ use std::sync::mpsc::Sender;
 use crate::events::{Event, EventSink};
 use crate::mincore::{DefaultPageMap, PageMap};
 use crate::ops::{
-    self, FileContext, FileProcessed, FileRange, Op, Stats, continue_full_process,
-    continue_skip_process, prepare_file, prepare_with_residency,
+    self, FileContext, FileProcessed, FileRange, Op, PreparedFile, Stats, prepare_file,
 };
 
 pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
@@ -47,47 +46,44 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             max_len: None,
         };
 
-        let prep = match prepare_with_residency::<PM>(path, &full_file) {
-            Ok(Some(p)) => p,
+        let pf = match prepare_file(path, &full_file) {
+            Ok(Some(pf)) => pf,
             Ok(None) => return None,
             Err(e) => {
                 tracing::warn!("{}: {e}", path.display());
                 return None;
             }
         };
+        let residency: PM = match crate::mincore::residency(&pf.mmap, pf.len) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("{}: {e}", path.display());
+                return None;
+            }
+        };
+        let pages_in_core = residency.count_filled();
+        let total_pages = pf.total_pages;
 
         stats.total_files.fetch_add(1, Ordering::Relaxed);
-        stats
-            .total_pages
-            .fetch_add(prep.pf.total_pages, Ordering::Relaxed);
+        stats.total_pages.fetch_add(total_pages, Ordering::Relaxed);
         stats
             .initial_pages_in_core
-            .fetch_add(prep.pages_in_core, Ordering::Relaxed);
+            .fetch_add(pages_in_core, Ordering::Relaxed);
         self.sink.send(Event::FileStart {
             path: path_str.clone(),
-            total_pages: prep.pf.total_pages,
-            residency: prep.residency.clone(),
+            total_pages,
+            residency: residency.clone(),
         });
 
+        let prepared_pf = if range.is_full_file() { Some(pf) } else { None };
+
         if O::SKIP_RESIDENCY {
-            let total_pages = prep.pf.total_pages;
-            let has_range = range.offset != 0 || range.max_len.is_some();
-            let result = if has_range {
-                match skip_process_file::<O, PM>(op, path, range) {
-                    Ok(Some(r)) => r,
-                    Ok(None) => return None,
-                    Err(e) => {
-                        tracing::warn!("{e}");
-                        return None;
-                    }
-                }
-            } else {
-                match continue_skip_process::<O, PM>(op, path, prep.pf) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::warn!("{e}");
-                        return None;
-                    }
+            let result = match skip_process_file::<O, PM>(op, path, range, prepared_pf) {
+                Ok(Some(r)) => r,
+                Ok(None) => return None,
+                Err(e) => {
+                    tracing::warn!("{e}");
+                    return None;
                 }
             };
 
@@ -126,32 +122,16 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             });
         };
 
-        let has_range = range.offset != 0 || range.max_len.is_some();
-        let result = if has_range {
-            match full_process_file::<O, PM>(op, path, range, Some(&on_progress)) {
+        let prepared_full = prepared_pf.map(|pf| (pf, residency, pages_in_core));
+        let result =
+            match full_process_file::<O, PM>(op, path, range, Some(&on_progress), prepared_full) {
                 Ok(Some(r)) => r,
                 Ok(None) => return None,
                 Err(e) => {
                     tracing::warn!("{e}");
                     return None;
                 }
-            }
-        } else {
-            match continue_full_process::<O, PM>(
-                op,
-                path,
-                prep.pf,
-                prep.residency,
-                prep.pages_in_core,
-                Some(&on_progress),
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    return None;
-                }
-            }
-        };
+            };
 
         // Flush remaining action_pages not covered by the progress callback.
         let reported = reported_action.load(Ordering::Relaxed);
@@ -186,7 +166,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
         stats: &Stats,
     ) -> Option<O::Output> {
         if O::SKIP_RESIDENCY {
-            let result = match skip_process_file::<O, PM>(op, path, range) {
+            let result = match skip_process_file::<O, PM>(op, path, range, None) {
                 Ok(Some(r)) => r,
                 Ok(None) => return None,
                 Err(e) => {
@@ -216,13 +196,19 @@ pub(crate) fn full_process_file<O: Op, PM: PageMap + Sync>(
     path: &Path,
     range: &FileRange,
     on_progress: Option<&(dyn Fn(usize, usize) + Sync)>,
+    prepared: Option<(PreparedFile, PM, usize)>,
 ) -> crate::Result<Option<ops::FullResult<O::Output, PM>>> {
-    let Some(pf) = prepare_file(path, range)? else {
-        return Ok(None);
+    let (pf, residency_before, pages_in_core_before) = match prepared {
+        Some(tuple) => tuple,
+        None => {
+            let Some(pf) = prepare_file(path, range)? else {
+                return Ok(None);
+            };
+            let residency_before: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
+            let pages_in_core_before = residency_before.count_filled();
+            (pf, residency_before, pages_in_core_before)
+        }
     };
-
-    let residency_before: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
-    let pages_in_core_before = residency_before.count_filled();
 
     let ctx = FileContext {
         file: &pf.file,
@@ -287,9 +273,16 @@ pub(crate) fn skip_process_file<O: Op, PM: PageMap + Sync>(
     op: &O,
     path: &Path,
     range: &FileRange,
+    prepared: Option<PreparedFile>,
 ) -> crate::Result<Option<ops::SkipResult<O::Output>>> {
-    let Some(pf) = prepare_file(path, range)? else {
-        return Ok(None);
+    let pf = match prepared {
+        Some(pf) => pf,
+        None => {
+            let Some(pf) = prepare_file(path, range)? else {
+                return Ok(None);
+            };
+            pf
+        }
     };
 
     let ctx = FileContext {
