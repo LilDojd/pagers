@@ -54,29 +54,35 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn render_frame<PM: PageMap>(
-    files: &[&FileState<PM>],
-    file_rows_hwm: u16,
-    core_stats: &Stats,
-    elapsed: f64,
-    label: &str,
+struct RenderContext<'a> {
+    core_stats: &'a Stats,
+    label: &'a str,
     action_sign: isize,
-    area: Rect,
-    buf: &mut Buffer,
-) {
-    let [files_area, stats_area] = ui::layout(file_rows_hwm, area);
-    ui::FileListWidget {
-        files,
-        max_rows: file_rows_hwm,
+}
+
+impl RenderContext<'_> {
+    fn render<PM: PageMap>(
+        &self,
+        files: &[&FileState<PM>],
+        file_rows_hwm: u16,
+        elapsed: f64,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        let [files_area, stats_area] = ui::layout(file_rows_hwm, area);
+        ui::FileListWidget {
+            files,
+            max_rows: file_rows_hwm,
+        }
+        .render(files_area, buf);
+        stats::SummaryWidget {
+            stats: self.core_stats,
+            elapsed,
+            label: self.label,
+            action_sign: self.action_sign,
+        }
+        .render(stats_area, buf);
     }
-    .render(files_area, buf);
-    stats::SummaryWidget {
-        stats: core_stats,
-        elapsed,
-        label,
-        action_sign,
-    }
-    .render(stats_area, buf);
 }
 
 fn drain_events<PM: PageMap>(
@@ -109,6 +115,11 @@ pub fn run<PM: PageMap + Send + 'static>(
     let tui_rx = event::spawn_event_threads(rx, term);
     let mut app = App::new();
     let mut file_rows_hwm: u16 = 0;
+    let ctx = RenderContext {
+        core_stats: &core_stats,
+        label,
+        action_sign,
+    };
 
     let flow = loop {
         let flow = match tui_rx.recv_timeout(FRAME_BUDGET) {
@@ -126,13 +137,10 @@ pub fn run<PM: PageMap + Send + 'static>(
         let files = app.visible_files(MAX_DISPLAY_FILES as usize);
         file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
         guard.terminal.draw(|frame| {
-            render_frame(
+            ctx.render(
                 &files,
                 file_rows_hwm,
-                &core_stats,
                 elapsed,
-                label,
-                action_sign,
                 frame.area(),
                 frame.buffer_mut(),
             );
@@ -155,16 +163,7 @@ pub fn run<PM: PageMap + Send + 'static>(
         let total_lines = file_rows_hwm + stats::SUMMARY_LINES;
 
         let _ = guard.terminal.insert_before(total_lines, |buf| {
-            render_frame(
-                &files,
-                file_rows_hwm,
-                &core_stats,
-                elapsed,
-                label,
-                action_sign,
-                buf.area,
-                buf,
-            );
+            ctx.render(&files, file_rows_hwm, elapsed, buf.area, buf);
         });
     }
 

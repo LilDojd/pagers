@@ -151,9 +151,7 @@ mod tests {
         let backend = TestBackend::new(width, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| {
-                FileRowWidget { file }.render(frame.area(), frame.buffer_mut())
-            })
+            .draw(|frame| FileRowWidget { file }.render(frame.area(), frame.buffer_mut()))
             .unwrap();
         buffer_to_string(terminal.backend().buffer())
     }
