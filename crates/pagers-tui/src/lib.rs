@@ -7,6 +7,7 @@ mod ui;
 pub use app::App;
 pub use state::FileState;
 
+use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
@@ -24,6 +25,32 @@ const MAX_DISPLAY_FILES: u16 = 8;
 const MAX_DISPLAY_PAGES: usize = 32;
 const FRAME_BUDGET: Duration = Duration::from_millis(100);
 
+struct TerminalGuard {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+}
+
+impl TerminalGuard {
+    fn new(viewport_height: u16) -> Result<Self> {
+        crossterm::terminal::enable_raw_mode()?;
+        crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
+        let backend = CrosstermBackend::new(io::stdout());
+        let terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(viewport_height),
+            },
+        )?;
+        Ok(Self { terminal })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
 pub fn run<PM: PageMap + Send + 'static>(
     rx: mpsc::Receiver<CoreEvent<PM>>,
     term: Arc<AtomicBool>,
@@ -35,16 +62,7 @@ pub fn run<PM: PageMap + Send + 'static>(
     color_eyre::install()?;
 
     let viewport_height = MAX_DISPLAY_FILES + stats::SUMMARY_LINES;
-
-    crossterm::terminal::enable_raw_mode()?;
-    crossterm::execute!(std::io::stdout(), crossterm::cursor::Hide)?;
-    let backend = CrosstermBackend::new(std::io::stdout());
-    let mut terminal = Terminal::with_options(
-        backend,
-        TerminalOptions {
-            viewport: Viewport::Inline(viewport_height),
-        },
-    )?;
+    let mut guard = TerminalGuard::new(viewport_height)?;
 
     let term_cleanup = Arc::clone(&term);
     let tui_rx = event::spawn_event_threads(rx, term);
@@ -83,7 +101,7 @@ pub fn run<PM: PageMap + Send + 'static>(
         let elapsed = start.elapsed().as_secs_f64();
         let files = app.visible_files(MAX_DISPLAY_FILES as usize);
         file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
-        terminal.draw(|frame| {
+        guard.terminal.draw(|frame| {
             let [files_area, stats_area] = ui::layout(file_rows_hwm, frame.area());
             ui::render_refs_to_buf(&files, file_rows_hwm, files_area, frame.buffer_mut());
             stats::render_summary(
@@ -111,15 +129,12 @@ pub fn run<PM: PageMap + Send + 'static>(
         file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
         let total_lines = file_rows_hwm + stats::SUMMARY_LINES;
 
-        let _ = terminal.insert_before(total_lines, |buf| {
+        let _ = guard.terminal.insert_before(total_lines, |buf| {
             let [files_area, stats_area] = ui::layout(file_rows_hwm, buf.area);
             ui::render_refs_to_buf(&files, file_rows_hwm, files_area, buf);
             stats::render_summary(&core_stats, elapsed, label, action_sign, stats_area, buf);
         });
     }
-
-    crossterm::execute!(std::io::stdout(), crossterm::cursor::Show)?;
-    crossterm::terminal::disable_raw_mode()?;
 
     Ok(())
 }
