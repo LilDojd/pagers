@@ -1,8 +1,8 @@
 //! Linux cachestat(2) syscall wrapper (kernel 6.5+).
 
-lazy_static::lazy_static! {
-    pub static ref SUPPORTED: bool = probe_support();
-}
+use std::sync::LazyLock;
+
+pub static SUPPORTED: LazyLock<bool> = LazyLock::new(probe_support);
 
 #[cfg(target_os = "linux")]
 fn probe_support() -> bool {

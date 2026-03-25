@@ -49,7 +49,7 @@ fn wait_for_child(read_fd: OwnedFd) -> Result<(), Error> {
 }
 
 fn redirect_stdio() {
-    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::fd::FromRawFd;
     if let Ok(devnull) = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

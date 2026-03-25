@@ -60,61 +60,43 @@ fn main() -> ExitCode {
 
 fn run(cli: cli::Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
     match cli.command {
-        Command::Query(a) => {
-            let quiet = a.output.is_quiet();
-            let cmd = C::new(ops::Query, a.common(), term, a.output.format, quiet, None);
-            match a.output.format {
-                Some(_) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
-                None => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
-            }
-        }
-        Command::Touch(a) => {
-            let quiet = a.output.is_quiet();
-            let cmd = C::new(ops::Touch, a.common(), term, a.output.format, quiet, None);
-            match a.output.format {
-                Some(_) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
-                None => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
-            }
-        }
-        Command::Evict(a) => {
-            let quiet = a.output.is_quiet();
-            let cmd = C::new(ops::Evict, a.common(), term, a.output.format, quiet, None);
-            match a.output.format {
-                Some(_) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
-                None => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
-            }
-        }
-        Command::Lock(a) => {
-            let quiet = a.output.is_quiet();
-            let cmd = C::new(
-                ops::Lock,
-                a.common(),
-                term,
-                a.output.format,
-                quiet,
-                Some(&a.inner),
-            );
-            match (a.inner.daemon, a.output.format.is_some()) {
-                (true, _) => Run::<mode::Daemon, mode::CliMode>::run(cmd),
-                (false, true) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
-                (false, false) => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
-            }
-        }
-        Command::Lockall(a) => {
-            let quiet = a.output.is_quiet();
-            let cmd = C::new(
-                ops::Lockall,
-                a.common(),
-                term,
-                a.output.format,
-                quiet,
-                Some(&a.inner),
-            );
-            match (a.inner.daemon, a.output.format.is_some()) {
-                (true, _) => Run::<mode::Daemon, mode::CliMode>::run(cmd),
-                (false, true) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
-                (false, false) => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
-            }
-        }
+        Command::Query(ref a) => run_simple(ops::Query, a, term),
+        Command::Touch(ref a) => run_simple(ops::Touch, a, term),
+        Command::Evict(ref a) => run_simple(ops::Evict, a, term),
+        Command::Lock(ref a) => run_lockable(ops::Lock, a, term),
+        Command::Lockall(ref a) => run_lockable(ops::Lockall, a, term),
+    }
+}
+
+fn run_simple<O: ops::Op + Send + 'static>(
+    op: O,
+    a: &WithCommon<()>,
+    term: &Arc<AtomicBool>,
+) -> Result<(), Error>
+where
+    O::Output: 'static,
+{
+    let quiet = a.output.is_quiet();
+    let cmd = C::new(op, a.common(), term, a.output.format, quiet, None);
+    match a.output.format {
+        Some(_) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
+        None => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
+    }
+}
+
+fn run_lockable<O: ops::Op + Send + 'static>(
+    op: O,
+    a: &WithCommon<LockInner>,
+    term: &Arc<AtomicBool>,
+) -> Result<(), Error>
+where
+    O::Output: 'static,
+{
+    let quiet = a.output.is_quiet();
+    let cmd = C::new(op, a.common(), term, a.output.format, quiet, Some(&a.inner));
+    match (a.inner.daemon, a.output.format.is_some()) {
+        (true, _) => Run::<mode::Daemon, mode::CliMode>::run(cmd),
+        (false, true) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
+        (false, false) => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
     }
 }

@@ -25,11 +25,11 @@ impl crate::cli::OutputFormatArg {
 }
 
 fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    let mut cap = s.to_string();
+    if let Some(c) = cap.get_mut(0..1) {
+        c.make_ascii_uppercase();
     }
+    cap
 }
 
 impl OutputFormat<Human> for Summary {

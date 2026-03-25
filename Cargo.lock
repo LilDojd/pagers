@@ -1259,7 +1259,6 @@ dependencies = [
  "dashmap",
  "humantime",
  "ignore",
- "lazy_static",
  "libc",
  "memmap2",
  "nix 0.31.2",
