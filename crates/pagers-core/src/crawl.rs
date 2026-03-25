@@ -55,6 +55,8 @@ pub struct CrawlConfig {
     pub max_file_size: Option<u64>,
     pub batch: Option<PathBuf>,
     pub nul_delim: bool,
+    #[cfg(feature = "rayon")]
+    pub threads: Threads,
 }
 
 pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(

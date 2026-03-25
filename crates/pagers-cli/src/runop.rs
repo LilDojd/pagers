@@ -97,6 +97,8 @@ fn common_setup(
         max_file_size: common.max_file_size,
         batch,
         nul_delim: common.nul_delim,
+        #[cfg(feature = "rayon")]
+        threads: crawl::Threads::default(),
     };
 
     Ok((range, extra_paths, crawl_config))
