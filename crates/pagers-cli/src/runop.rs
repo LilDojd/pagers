@@ -1,4 +1,3 @@
-use std::io::IsTerminal;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -9,48 +8,90 @@ use pagers_core::output::Summary;
 use pagers_core::{crawl, ops};
 
 use crate::Error;
-use crate::cli::CommonArgs;
+use crate::cli::{CommonArgs, LockInner, OutputFormatArg};
+use crate::daemon;
 
-pub(crate) trait Run {
+pub(crate) trait Run<D, M> {
     fn run(self) -> Result<(), Error>;
 }
 
-pub(crate) struct SimpleCmd<'a, O, PM: PageMap = DefaultPageMap> {
-    op: O,
-    common: &'a CommonArgs,
-    term: &'a Arc<AtomicBool>,
+pub(crate) struct Cmd<'a, O, PM: PageMap = DefaultPageMap> {
+    pub op: O,
+    pub common: &'a CommonArgs,
+    pub term: &'a Arc<AtomicBool>,
+    pub format: Option<OutputFormatArg>,
+    pub quiet: bool,
+    pub lock: Option<&'a LockInner>,
     _phantom: std::marker::PhantomData<PM>,
 }
 
-impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
-    SimpleCmd<'a, O, PM>
-where
-    O::Output: 'static,
-{
-    pub fn new(op: O, common: &'a CommonArgs, term: &'a Arc<AtomicBool>) -> Self {
+impl<'a, O, PM: PageMap> Cmd<'a, O, PM> {
+    pub fn new(
+        op: O,
+        common: &'a CommonArgs,
+        term: &'a Arc<AtomicBool>,
+        format: Option<OutputFormatArg>,
+        quiet: bool,
+        lock: Option<&'a LockInner>,
+    ) -> Self {
         Self {
             op,
             common,
             term,
+            format,
+            quiet,
+            lock,
             _phantom: std::marker::PhantomData,
         }
     }
 }
 
-impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static> Run
-    for SimpleCmd<'_, O, PM>
+impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
+    Run<mode::NoDaemon, mode::TuiMode> for Cmd<'_, O, PM>
 where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        let use_tui = !self.common.verbosity.is_silent() && std::io::stdout().is_terminal();
-        let (stats, _, elapsed) = if use_tui {
-            run_tui::<O, PM>(&self.op, self.common, self.term)?
-        } else {
-            run_cli::<O, PM>(&self.op, self.common)?
-        };
-        maybe_print_summary::<O>(&stats, elapsed, self.common);
+        let (stats, _outputs, _) = run_tui::<O, PM>(&self.op, self.common, self.term)?;
+        if let Some(lock) = self.lock {
+            daemon::hold(&stats, lock, self.term, None);
+        }
         Ok(())
+    }
+}
+
+impl<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>
+    Run<mode::NoDaemon, mode::CliMode> for Cmd<'_, O, PM>
+where
+    O::Output: 'static,
+{
+    fn run(self) -> Result<(), Error> {
+        let (stats, _, elapsed) = run_cli::<O, PM>(&self.op, self.common)?;
+        if !self.quiet {
+            print_summary::<O>(&stats, elapsed, self.format.unwrap_or_default());
+        }
+        if let Some(lock) = self.lock {
+            daemon::hold(&stats, lock, self.term, None);
+        }
+        Ok(())
+    }
+}
+
+impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
+    Run<mode::Daemon, mode::CliMode> for Cmd<'_, O, PM>
+where
+    O::Output: 'static,
+{
+    fn run(self) -> Result<(), Error> {
+        let lock = self.lock.expect("daemon requires LockInner");
+        match daemon::go_daemon(lock.wait)? {
+            daemon::ForkOutcome::Parent => Ok(()),
+            daemon::ForkOutcome::Child(notify_fd) => {
+                let (stats, _locks, _) = run_cli::<O, PM>(&self.op, self.common)?;
+                daemon::hold(&stats, lock, self.term, notify_fd);
+                Ok(())
+            }
+        }
     }
 }
 
@@ -170,15 +211,7 @@ where
     Ok((stats, outputs?, elapsed))
 }
 
-fn maybe_print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, common: &CommonArgs) {
-    if common.verbosity.is_silent() {
-        return;
-    }
-    if std::io::stdout().is_terminal() {
-        return;
-    }
+fn print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, fmt: OutputFormatArg) {
     let summary = Summary::from_stats(stats, elapsed, O::ACTION_SIGN);
-    common
-        .output
-        .print_summary(&summary, O::LABEL, O::ACTION_SIGN != 0);
+    fmt.print_summary(&summary, O::LABEL, O::ACTION_SIGN != 0);
 }

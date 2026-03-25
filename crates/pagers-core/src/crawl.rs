@@ -35,6 +35,7 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     stats: &Stats,
     display: &D,
 ) -> crate::Result<Vec<O::Output>> {
+    tracing::info!("starting {} on {} path(s)", O::LABEL, paths.len());
     let seen_inodes = InodeSet::default();
 
     #[cfg(feature = "rayon")]
@@ -63,6 +64,11 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
 
         display.finish();
         op.finish()?;
+        tracing::info!(
+            "done: {} files, {} pages",
+            stats.total_files.load(Ordering::Relaxed),
+            stats.total_pages.load(Ordering::Relaxed),
+        );
         Ok(outputs)
     }
 
@@ -75,6 +81,11 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
             .collect();
         display.finish();
         op.finish()?;
+        tracing::info!(
+            "done: {} files, {} pages",
+            stats.total_files.load(Ordering::Relaxed),
+            stats.total_pages.load(Ordering::Relaxed),
+        );
         Ok(outputs)
     }
 }
@@ -100,6 +111,7 @@ fn collect_file_paths_streaming(
 
     for path in &all_paths {
         if path.is_dir() {
+            tracing::info!("crawling directory {}", path.display());
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
             walk_dir_entries(path, crawl_config, needs_meta, seen_inodes, |p| {
                 let _ = tx.send(p);
@@ -133,6 +145,7 @@ fn collect_file_paths(
 
     for path in &all_paths {
         if path.is_dir() {
+            tracing::info!("crawling directory {}", path.display());
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
             walk_dir_entries(path, crawl_config, needs_meta, seen_inodes, |p| {
                 file_paths.push(p);
@@ -144,6 +157,7 @@ fn collect_file_paths(
         }
     }
 
+    tracing::info!("discovered {} files", file_paths.len());
     file_paths
 }
 

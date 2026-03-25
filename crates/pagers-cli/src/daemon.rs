@@ -1,73 +1,17 @@
-use std::io::IsTerminal;
 use std::os::fd::OwnedFd;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use pagers_core::mincore::{DefaultPageMap, PageMap};
 use pagers_core::{ops, output};
 
 use crate::Error;
-use crate::cli::{LockInner, WithCommon};
-use crate::runop::{Run, run_cli, run_tui};
+use crate::cli::LockInner;
 
-pub(crate) struct DaemonCmd<'a, O, PM: PageMap = DefaultPageMap> {
-    op: O,
-    args: &'a WithCommon<LockInner>,
-    term: &'a Arc<AtomicBool>,
-    _phantom: std::marker::PhantomData<PM>,
-}
-
-impl<'a, O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
-    DaemonCmd<'a, O, PM>
-where
-    O::Output: 'static,
-{
-    pub fn new(op: O, args: &'a WithCommon<LockInner>, term: &'a Arc<AtomicBool>) -> Self {
-        Self {
-            op,
-            args,
-            term,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static> Run
-    for DaemonCmd<'_, O, PM>
-where
-    O::Output: 'static,
-{
-    fn run(self) -> Result<(), Error> {
-        match self.args.inner.daemon {
-            true => match go_daemon(self.args.inner.wait)? {
-                ForkOutcome::Parent => Ok(()),
-                ForkOutcome::Child(notify_fd) => {
-                    let (stats, _locks, _) = run_cli::<O, PM>(&self.op, self.args.common())?;
-                    hold(&stats, &self.args.inner, self.term, notify_fd);
-                    Ok(())
-                }
-            },
-            false => {
-                let use_tui =
-                    !self.args.common().verbosity.is_silent() && std::io::stdout().is_terminal();
-                let (stats, _locks, _) = if use_tui {
-                    run_tui::<O, PM>(&self.op, self.args.common(), self.term)?
-                } else {
-                    run_cli::<O, PM>(&self.op, self.args.common())?
-                };
-                hold(&stats, &self.args.inner, self.term, None);
-                Ok(())
-            }
-        }
-    }
-}
-
-enum ForkOutcome {
+pub(crate) enum ForkOutcome {
     Parent,
     Child(Option<OwnedFd>),
 }
 
-fn go_daemon(wait: bool) -> Result<ForkOutcome, Error> {
+pub(crate) fn go_daemon(wait: bool) -> Result<ForkOutcome, Error> {
     let pipe = if wait {
         Some(nix::unistd::pipe()?)
     } else {
@@ -119,7 +63,12 @@ fn redirect_stdio() {
     }
 }
 
-fn hold(stats: &ops::Stats, inner: &LockInner, term: &AtomicBool, notify_fd: Option<OwnedFd>) {
+pub(crate) fn hold(
+    stats: &ops::Stats,
+    inner: &LockInner,
+    term: &AtomicBool,
+    notify_fd: Option<OwnedFd>,
+) {
     if let Some(p) = &inner.pidfile
         && let Err(e) = std::fs::write(p, format!("{}\n", std::process::id()))
     {

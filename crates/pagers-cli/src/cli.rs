@@ -22,12 +22,19 @@ pub struct WithCommon<T: clap::Args> {
     pub common: CommonArgs,
 
     #[command(flatten)]
+    pub output: OutputArgs,
+
+    #[command(flatten)]
     pub inner: T,
 }
 
 impl<T: clap::Args> WithCommon<T> {
     pub fn common(&self) -> &CommonArgs {
         &self.common
+    }
+
+    pub fn output(&self) -> &OutputArgs {
+        &self.output
     }
 }
 
@@ -46,15 +53,32 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn common(&self) -> &CommonArgs {
+    pub fn output(&self) -> &OutputArgs {
         match self {
-            Self::Query(a) | Self::Touch(a) | Self::Evict(a) => a.common(),
-            Self::Lock(a) | Self::Lockall(a) => a.common(),
+            Self::Query(a) | Self::Touch(a) | Self::Evict(a) => a.output(),
+            Self::Lock(a) | Self::Lockall(a) => a.output(),
         }
     }
+}
 
-    pub fn verbosity(&self) -> &clap_verbosity_flag::Verbosity {
-        &self.common().verbosity
+#[derive(clap::Args, Debug)]
+pub struct OutputArgs {
+    /// Output format (enables CLI mode; omit for TUI)
+    #[arg(short = 'o', long, value_enum)]
+    pub format: Option<OutputFormatArg>,
+
+    #[command(flatten)]
+    pub verbosity: clap_verbosity_flag::Verbosity<clap_verbosity_flag::WarnLevel>,
+}
+
+impl OutputArgs {
+    /// Any `-q` flag was passed (verbosity reduced below the default warn level).
+    pub fn is_quiet(&self) -> bool {
+        use clap_verbosity_flag::VerbosityFilter;
+        matches!(
+            self.verbosity.filter(),
+            VerbosityFilter::Off | VerbosityFilter::Error
+        )
     }
 }
 
@@ -87,9 +111,6 @@ pub struct CommonArgs {
     #[arg(short = 'H')]
     pub count_hardlinks: bool,
 
-    #[command(flatten)]
-    pub verbosity: clap_verbosity_flag::Verbosity,
-
     /// Max file size (e.g. 4k, 100M, 1.5G)
     #[arg(short = 'm', long, value_parser = parse_size)]
     pub max_file_size: Option<u64>,
@@ -108,10 +129,6 @@ pub struct CommonArgs {
     /// NUL-delimited paths in batch mode
     #[arg(short = '0', requires = "batch")]
     pub nul_delim: bool,
-
-    /// Output format
-    #[arg(short = 'o', long, value_enum, default_value_t)]
-    pub output: OutputFormatArg,
 
     /// Number of threads (0 = all cores)
     #[cfg(feature = "rayon")]

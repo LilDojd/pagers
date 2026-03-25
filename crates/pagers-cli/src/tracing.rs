@@ -1,6 +1,6 @@
-use clap_verbosity_flag::Verbosity;
+use clap_verbosity_flag::{Verbosity, WarnLevel};
 
-pub fn init(verbosity: &Verbosity) {
+pub fn init(verbosity: &Verbosity<WarnLevel>) {
     let filter = verbosity.tracing_level_filter();
     if filter == tracing::level_filters::LevelFilter::OFF {
         return;

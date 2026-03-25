@@ -20,7 +20,7 @@ fn test_query_single_file() {
     f.flush().unwrap();
 
     let output = pagers_bin()
-        .args(["query", file_path.to_str().unwrap()])
+        .args(["query", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
 
@@ -43,7 +43,7 @@ fn test_touch_single_file() {
     f.flush().unwrap();
 
     let output = pagers_bin()
-        .args(["touch", file_path.to_str().unwrap()])
+        .args(["touch", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
 
@@ -65,7 +65,7 @@ fn test_evict_single_file() {
     f.flush().unwrap();
 
     let output = pagers_bin()
-        .args(["evict", file_path.to_str().unwrap()])
+        .args(["evict", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
 
@@ -88,7 +88,7 @@ fn test_query_directory() {
     }
 
     let output = pagers_bin()
-        .args(["query", dir.path().to_str().unwrap()])
+        .args(["query", "-o", "human", dir.path().to_str().unwrap()])
         .output()
         .unwrap();
 
@@ -156,7 +156,7 @@ fn test_quiet_mode() {
     f.write_all(&vec![0u8; 4096]).unwrap();
 
     let output = pagers_bin()
-        .args(["query", "-q", file_path.to_str().unwrap()])
+        .args(["query", "-o", "human", "-q", file_path.to_str().unwrap()])
         .output()
         .unwrap();
 
@@ -190,7 +190,14 @@ fn test_max_file_size_filter() {
     fs::write(&large, vec![0u8; 100_000]).unwrap();
 
     let output = pagers_bin()
-        .args(["query", "-m", "1k", dir.path().to_str().unwrap()])
+        .args([
+            "query",
+            "-m",
+            "1k",
+            "-o",
+            "human",
+            dir.path().to_str().unwrap(),
+        ])
         .output()
         .unwrap();
 
@@ -213,7 +220,7 @@ fn test_touch_then_query_shows_resident() {
     fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
 
     let output = pagers_bin()
-        .args(["touch", file_path.to_str().unwrap()])
+        .args(["touch", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -253,13 +260,13 @@ fn test_evict_then_query_runs_successfully() {
     fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
 
     let output = pagers_bin()
-        .args(["touch", file_path.to_str().unwrap()])
+        .args(["touch", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     let output = pagers_bin()
-        .args(["evict", file_path.to_str().unwrap()])
+        .args(["evict", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -282,7 +289,7 @@ fn test_query_empty_file() {
     fs::File::create(&file_path).unwrap();
 
     let output = pagers_bin()
-        .args(["query", file_path.to_str().unwrap()])
+        .args(["query", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
 
@@ -301,7 +308,7 @@ fn test_query_empty_file() {
 #[test]
 fn test_query_nonexistent_file() {
     let output = pagers_bin()
-        .args(["query", "/nonexistent/path/file.dat"])
+        .args(["query", "-o", "human", "/nonexistent/path/file.dat"])
         .output()
         .unwrap();
 
@@ -608,6 +615,13 @@ fn test_touch_reports_nonzero_touched_and_resident() {
     let file_path = dir.path().join("test.dat");
     fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
 
+    // Evict first so touch has pages to bring in
+    let output = pagers_bin()
+        .args(["evict", "-o", "human", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
     let output = pagers_bin()
         .args(["touch", "-o", "json", file_path.to_str().unwrap()])
         .output()
@@ -631,7 +645,7 @@ fn test_evict_reports_nonzero_evicted() {
 
     // Touch first
     let output = pagers_bin()
-        .args(["touch", file_path.to_str().unwrap()])
+        .args(["touch", "-o", "human", file_path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -733,6 +747,13 @@ fn test_touch_directory_reports_counts() {
         .unwrap();
     }
 
+    // Evict first so touch has pages to bring in
+    let output = pagers_bin()
+        .args(["evict", "-o", "human", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
     let output = pagers_bin()
         .args(["touch", "-o", "json", dir.path().to_str().unwrap()])
         .output()
@@ -750,6 +771,13 @@ fn test_touch_kv_has_both_metrics() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
     fs::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
+
+    // Evict first so touch has pages to bring in
+    let output = pagers_bin()
+        .args(["evict", "-o", "human", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
 
     let output = pagers_bin()
         .args(["touch", "-o", "kv", file_path.to_str().unwrap()])

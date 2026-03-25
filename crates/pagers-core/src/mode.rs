@@ -157,6 +157,12 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
 
 pub struct Cli;
 
+// Marker ZSTs for run-mode dispatch
+pub struct TuiMode;
+pub struct CliMode;
+pub struct Daemon;
+pub struct NoDaemon;
+
 impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
     fn process_one<O: Op>(
         &self,
@@ -175,6 +181,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
                 }
             };
             cli_record_stats::<O>(&result, stats);
+            tracing::info!("{}: {} pages", path.display(), result.total_pages());
             return Some(result.into_output());
         }
 
@@ -187,6 +194,12 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
             }
         };
         cli_record_stats::<O>(&result, stats);
+        tracing::info!(
+            "{}: {}/{} pages resident",
+            path.display(),
+            result.pages_in_core_after(),
+            result.total_pages(),
+        );
         Some(result.into_output())
     }
 }
