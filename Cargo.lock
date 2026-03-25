@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "pagers"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anstyle",
  "clap",
@@ -1252,7 +1252,7 @@ dependencies = [
 
 [[package]]
 name = "pagers-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bitvec",
  "criterion",
@@ -1271,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "pagers-tui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bitvec",
  "color-eyre",

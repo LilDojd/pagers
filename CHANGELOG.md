@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-03-25
+
+### Bug Fixes
+
+- Suppress TUI when -q is passed without -o
+- Visible_files returns empty list when all files are done and count exceeds max
+
+### Features
+
+- Support q key to quit TUI alongside Ctrl+C
+
+### Performance
+
+- Optimize BitVec::from_residency_bytes with byte-level packing
+- *(tui)* Incremental pages_in_core tracking in progress events
+- *(tui)* Use Arc<str> for event paths to avoid per-progress string clones
+
+### Refactor
+
+- Fix inconsistencies and code smells across crates
+- Replace lazy_static with LazyLock, extract CLI dispatch helpers
+- Unify crawl path collection logic
+- Replace Cachestat::zeroed with derived Default
+- Add TerminalGuard for RAII cleanup of raw mode and cursor
+- Implement Widget trait for FileRow and SummaryWidget
+- Extract drain_events and deduplicate render logic in main loop
+- Introduce FrameContext to fix clippy too_many_arguments warning
+
 ## [0.1.4] - 2026-03-25
 
 ### Bug Fixes
@@ -29,6 +57,7 @@ All notable changes to this project will be documented in this file.
 ### Miscellaneous Tasks
 
 - *(ci)* Decrease timeout for flakehub-cache-action
+- *(release)* Prepare for v0.1.4
 
 ### Performance
 
