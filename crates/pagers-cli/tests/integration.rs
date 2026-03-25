@@ -614,6 +614,7 @@ fn test_touch_reports_nonzero_touched_and_resident() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
     fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+    fs::File::open(&file_path).unwrap().sync_all().unwrap();
 
     // Evict first so touch has pages to bring in
     let output = pagers_bin()
@@ -740,11 +741,9 @@ fn test_touch_then_evict_round_trip() {
 fn test_touch_directory_reports_counts() {
     let dir = tempfile::tempdir().unwrap();
     for i in 0..5 {
-        fs::write(
-            dir.path().join(format!("f{i}.dat")),
-            vec![0xABu8; 4096 * 10],
-        )
-        .unwrap();
+        let path = dir.path().join(format!("f{i}.dat"));
+        fs::write(&path, vec![0xABu8; 4096 * 10]).unwrap();
+        fs::File::open(&path).unwrap().sync_all().unwrap();
     }
 
     // Evict first so touch has pages to bring in
@@ -771,6 +770,7 @@ fn test_touch_kv_has_both_metrics() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
     fs::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
+    fs::File::open(&file_path).unwrap().sync_all().unwrap();
 
     // Evict first so touch has pages to bring in
     let output = pagers_bin()
