@@ -40,7 +40,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         range: &FileRange,
         stats: &Stats,
     ) -> Option<O::Output> {
-        let path_str = path.display().to_string();
+        let path_str: std::sync::Arc<str> = path.display().to_string().into();
         let full_file = FileRange {
             offset: 0,
             max_len: None,

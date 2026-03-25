@@ -1,5 +1,6 @@
 //! Events emitted during file processing for UI consumption.
 
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 
@@ -10,20 +11,20 @@ use crate::mincore::DefaultPageMap;
 pub enum Event<PM = DefaultPageMap> {
     /// A file has started processing. Includes initial residency snapshot.
     FileStart {
-        path: String,
+        path: Arc<str>,
         total_pages: usize,
         residency: PM,
     },
     /// Residency update during touch/lock polling.
     FileProgress {
-        path: String,
+        path: Arc<str>,
         page_offset: usize,
         pages_walked: usize,
         resident: bool,
     },
     /// File processing complete.
     FileDone {
-        path: String,
+        path: Arc<str>,
     },
     AllDone,
 }

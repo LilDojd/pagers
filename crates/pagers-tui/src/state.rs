@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use pagers_core::mincore::{DefaultPageMap, PageMap, PageMapSlice as _};
 
 pub struct FileState<PM: PageMap = DefaultPageMap> {
-    pub path: String,
+    pub path: Arc<str>,
     pub total_pages: usize,
     pub pages_in_core: usize,
     pub residency: PM,

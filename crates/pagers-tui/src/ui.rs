@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn test_render_single_file_shows_map_and_counter() {
         let file = FileState {
-            path: "/tmp/test.bin".to_string(),
+            path: "/tmp/test.bin".into(),
             total_pages: 100,
             pages_in_core: 75,
             residency: {
@@ -165,14 +165,14 @@ mod tests {
     #[test]
     fn test_render_files_sorted_by_ratio() {
         let high = FileState {
-            path: "/high.bin".to_string(),
+            path: "/high.bin".into(),
             total_pages: 100,
             pages_in_core: 90,
             residency: bitvec::bitvec![1; 100], // simplified
             done: false,
         };
         let low = FileState {
-            path: "/low.bin".to_string(),
+            path: "/low.bin".into(),
             total_pages: 100,
             pages_in_core: 10,
             residency: bitvec::bitvec![0; 100],
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn test_file_state_ratio() {
         let f = FileState {
-            path: "test".to_string(),
+            path: "test".into(),
             total_pages: 200,
             pages_in_core: 100,
             residency: bitvec::bitvec![1; 200],
@@ -203,7 +203,7 @@ mod tests {
         };
         assert!((f.ratio() - 0.5).abs() < f64::EPSILON);
         let empty = FileState {
-            path: "empty".to_string(),
+            path: "empty".into(),
             total_pages: 0,
             pages_in_core: 0,
             residency: bitvec::bitvec![],
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn test_done_file_shows_checkmark() {
         let file = FileState {
-            path: "/tmp/done.bin".to_string(),
+            path: "/tmp/done.bin".into(),
             total_pages: 100,
             pages_in_core: 100,
             residency: bitvec::bitvec![1; 100],
@@ -247,7 +247,7 @@ mod tests {
         let mut residency = bitvec::bitvec![1; 50];
         residency.extend(bitvec::bitvec![0; 50]);
         let file = FileState {
-            path: "/test.bin".to_string(),
+            path: "/test.bin".into(),
             total_pages: 100,
             pages_in_core: 50,
             residency,
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn test_bucketize() {
         let file = FileState {
-            path: "t".to_string(),
+            path: "t".into(),
             total_pages: 10,
             pages_in_core: 5,
             residency: bitvec::bitvec![1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn test_bucketize_single_page_not_loaded() {
         let file = FileState {
-            path: "t".to_string(),
+            path: "t".into(),
             total_pages: 1,
             pages_in_core: 0,
             residency: bitvec::bitvec![0; 1],
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn test_bucketize_single_page_loaded() {
         let file = FileState {
-            path: "t".to_string(),
+            path: "t".into(),
             total_pages: 1,
             pages_in_core: 1,
             residency: bitvec::bitvec![1],

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::mincore::{DefaultPageMap, PageMap, PageMapSlice as _};
@@ -8,7 +9,7 @@ use crate::state::FileState;
 
 pub struct App<PM: PageMap = DefaultPageMap> {
     files: Vec<FileState<PM>>,
-    file_index: HashMap<String, usize>,
+    file_index: HashMap<Arc<str>, usize>,
 }
 
 pub enum ControlFlow {
@@ -116,7 +117,7 @@ mod tests {
     fn test_handle_file_start() {
         let mut app = App::new();
         let flow = app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/test.bin".to_string(),
+            path: "/test.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![1; 50],
         }));
@@ -129,12 +130,12 @@ mod tests {
     fn test_handle_file_progress_uses_hashmap() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/a.bin".to_string(),
+            path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileProgress {
-            path: "/a.bin".to_string(),
+            path: "/a.bin".into(),
             page_offset: 0,
             pages_walked: 100,
             resident: true,
@@ -146,12 +147,12 @@ mod tests {
     fn test_handle_file_done_sets_flag() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/a.bin".to_string(),
+            path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
-            path: "/a.bin".to_string(),
+            path: "/a.bin".into(),
         }));
         assert!(app.files()[0].done);
     }
@@ -160,42 +161,42 @@ mod tests {
     fn test_files_in_insertion_order() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/first.bin".to_string(),
+            path: "/first.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![1; 90],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/second.bin".to_string(),
+            path: "/second.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![1; 10],
         }));
         let files = app.files();
-        assert_eq!(files[0].path, "/first.bin");
-        assert_eq!(files[1].path, "/second.bin");
+        assert_eq!(&*files[0].path, "/first.bin");
+        assert_eq!(&*files[1].path, "/second.bin");
     }
 
     #[test]
     fn test_visible_files_sorted_by_size_desc() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/small.bin".to_string(),
+            path: "/small.bin".into(),
             total_pages: 10,
             residency: bitvec::bitvec![0; 10],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/big.bin".to_string(),
+            path: "/big.bin".into(),
             total_pages: 1000,
             residency: bitvec::bitvec![0; 1000],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/mid.bin".to_string(),
+            path: "/mid.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
         let vis = app.visible_files(8);
-        assert_eq!(vis[0].path, "/big.bin");
-        assert_eq!(vis[1].path, "/mid.bin");
-        assert_eq!(vis[2].path, "/small.bin");
+        assert_eq!(&*vis[0].path, "/big.bin");
+        assert_eq!(&*vis[1].path, "/mid.bin");
+        assert_eq!(&*vis[2].path, "/small.bin");
     }
 
     #[test]
@@ -203,39 +204,39 @@ mod tests {
         let mut app = App::new();
         // Add 3 files, mark one done, max=2
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/a.bin".to_string(),
+            path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/b.bin".to_string(),
+            path: "/b.bin".into(),
             total_pages: 200,
             residency: bitvec::bitvec![0; 200],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/c.bin".to_string(),
+            path: "/c.bin".into(),
             total_pages: 50,
             residency: bitvec::bitvec![0; 50],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
-            path: "/b.bin".to_string(),
+            path: "/b.bin".into(),
         }));
         let vis = app.visible_files(2);
         assert_eq!(vis.len(), 2);
         // /b.bin is done and should be hidden since 3 > 2
-        assert!(vis.iter().all(|f| f.path != "/b.bin"));
+        assert!(vis.iter().all(|f| &*f.path != "/b.bin"));
     }
 
     #[test]
     fn test_visible_files_keeps_done_when_fits() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-            path: "/a.bin".to_string(),
+            path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
-            path: "/a.bin".to_string(),
+            path: "/a.bin".into(),
         }));
         // Only 1 file, max=8 → done file stays visible
         let vis = app.visible_files(8);
