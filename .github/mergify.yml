@@ -1,4 +1,15 @@
 pull_request_rules:
+  - name: Automatic merge for flake.lock update pull requests
+    conditions:
+      - label=automated
+      - label=dependencies
+      - head=update_flake_lock_action
+      - author=LilDojd
+      - "#check-failure=0"
+      - "#check-pending=0"
+    actions:
+      merge:
+        method: squash
   - name: Automatic merge for Dependabot pull requests
     conditions:
       - author=dependabot[bot]
