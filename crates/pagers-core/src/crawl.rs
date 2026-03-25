@@ -35,6 +35,26 @@ impl From<u16> for Threads {
 }
 
 #[cfg(feature = "rayon")]
+impl std::fmt::Display for Threads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::All => f.write_str("0"),
+            Self::Exact(n) => write!(f, "{n}"),
+        }
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl std::str::FromStr for Threads {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let n: u16 = s.parse()?;
+        Ok(Self::from(n))
+    }
+}
+
+#[cfg(feature = "rayon")]
 impl Threads {
     pub fn num_threads(self) -> usize {
         match self {
@@ -304,5 +324,26 @@ mod tests {
     fn threads_num_threads_exact() {
         assert_eq!(Threads::Exact(8).num_threads(), 8);
         assert_eq!(Threads::Exact(1).num_threads(), 1);
+    }
+
+    #[test]
+    fn threads_display() {
+        assert_eq!(Threads::All.to_string(), "0");
+        assert_eq!(Threads::Exact(4).to_string(), "4");
+    }
+
+    #[test]
+    fn threads_from_str() {
+        assert_eq!("0".parse::<Threads>(), Ok(Threads::All));
+        assert_eq!("4".parse::<Threads>(), Ok(Threads::Exact(4)));
+        assert_eq!("1".parse::<Threads>(), Ok(Threads::Exact(1)));
+        assert!("abc".parse::<Threads>().is_err());
+    }
+
+    #[test]
+    fn threads_display_roundtrip() {
+        for t in [Threads::All, Threads::Exact(1), Threads::Exact(8)] {
+            assert_eq!(t.to_string().parse::<Threads>(), Ok(t));
+        }
     }
 }

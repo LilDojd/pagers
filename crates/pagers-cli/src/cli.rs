@@ -115,8 +115,8 @@ pub struct CommonArgs {
 
     /// Number of threads (0 = all cores)
     #[cfg(feature = "rayon")]
-    #[arg(short = 'j', long, default_value_t = 0)]
-    pub threads: u16,
+    #[arg(short = 'j', long, default_value_t, value_parser = clap::value_parser!(pagers_core::crawl::Threads))]
+    pub threads: pagers_core::crawl::Threads,
 }
 
 #[derive(clap::Args, Debug)]
