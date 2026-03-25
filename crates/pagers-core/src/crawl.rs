@@ -14,7 +14,7 @@ use crate::par::{InodeSet, SeenInodes as _};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Threads {
     All,
-    Exact(u16),
+    Exact(std::num::NonZeroU16),
 }
 
 #[cfg(feature = "rayon")]
@@ -27,9 +27,9 @@ impl Default for Threads {
 #[cfg(feature = "rayon")]
 impl From<u16> for Threads {
     fn from(n: u16) -> Self {
-        match n {
-            0 => Self::All,
-            n => Self::Exact(n),
+        match std::num::NonZeroU16::new(n) {
+            None => Self::All,
+            Some(n) => Self::Exact(n),
         }
     }
 }
@@ -59,7 +59,7 @@ impl Threads {
     pub fn num_threads(self) -> usize {
         match self {
             Self::All => 0,
-            Self::Exact(n) => n as usize,
+            Self::Exact(n) => n.get() as usize,
         }
     }
 }
@@ -297,7 +297,13 @@ pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>
 #[cfg(test)]
 #[cfg(feature = "rayon")]
 mod tests {
+    use std::num::NonZeroU16;
+
     use super::*;
+
+    fn exact(n: u16) -> Threads {
+        Threads::Exact(NonZeroU16::new(n).unwrap())
+    }
 
     #[test]
     fn threads_from_zero_is_all() {
@@ -306,8 +312,8 @@ mod tests {
 
     #[test]
     fn threads_from_nonzero_is_exact() {
-        assert_eq!(Threads::from(4), Threads::Exact(4));
-        assert_eq!(Threads::from(1), Threads::Exact(1));
+        assert_eq!(Threads::from(4), exact(4));
+        assert_eq!(Threads::from(1), exact(1));
     }
 
     #[test]
@@ -322,27 +328,27 @@ mod tests {
 
     #[test]
     fn threads_num_threads_exact() {
-        assert_eq!(Threads::Exact(8).num_threads(), 8);
-        assert_eq!(Threads::Exact(1).num_threads(), 1);
+        assert_eq!(exact(8).num_threads(), 8);
+        assert_eq!(exact(1).num_threads(), 1);
     }
 
     #[test]
     fn threads_display() {
         assert_eq!(Threads::All.to_string(), "0");
-        assert_eq!(Threads::Exact(4).to_string(), "4");
+        assert_eq!(exact(4).to_string(), "4");
     }
 
     #[test]
     fn threads_from_str() {
         assert_eq!("0".parse::<Threads>(), Ok(Threads::All));
-        assert_eq!("4".parse::<Threads>(), Ok(Threads::Exact(4)));
-        assert_eq!("1".parse::<Threads>(), Ok(Threads::Exact(1)));
+        assert_eq!("4".parse::<Threads>(), Ok(exact(4)));
+        assert_eq!("1".parse::<Threads>(), Ok(exact(1)));
         assert!("abc".parse::<Threads>().is_err());
     }
 
     #[test]
     fn threads_display_roundtrip() {
-        for t in [Threads::All, Threads::Exact(1), Threads::Exact(8)] {
+        for t in [Threads::All, exact(1), exact(8)] {
             assert_eq!(t.to_string().parse::<Threads>(), Ok(t));
         }
     }
