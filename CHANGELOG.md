@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-03-25
+
+### Bug Fixes
+
+- *(ci)* Macos-14 -> macos-latest for darwin runners
+- Fix tests on linux by flushing
+
+### CI
+
+- *(Mergify)* Configuration update ([#9](https://github.com/LilDojd/pagers/pull/9))
+
+### Documentation
+
+- *(README)* Remove output formats row from README table
+- *(README)* Update MSRV and clean up supported targets section
+
+### Features
+
+- *(core)* Add Threads enum for configurable parallelism
+- *(core)* Add ThreadPool error variant for rayon pool build failures
+- *(core)* Add threads field to CrawlConfig
+- *(core)* Use scoped thread pool in crawl_and_process
+- *(cli)* Add -j/--threads option for parallel thread control
+
+### Miscellaneous Tasks
+
+- *(ci)* Decrease timeout for flakehub-cache-action
+
+### Performance
+
+- Skip tracing subscriber when no log level is active
+- *(core)* Mincore once optimization
+- Do not compile debug! and trace! by default
+
+### Refactor
+
+- *(cli)* Use Threads enum directly in CLI via FromStr
+- Use NonZeroU16 for Threads::Exact
+- Move Threads to par.rs with grouped cfg(rayon) module
+- Small ref in par process
+- *(cli)* Make Run a generic trait over TuiMode and OutputFormat, add more tracing
+
+## [0.1.3] - 2026-03-24
+
+### Miscellaneous Tasks
+
+- *(release)* Prepare for v0.1.3
+
 ## [0.1.2] - 2026-03-24
 
 ### Documentation
