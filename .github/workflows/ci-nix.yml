@@ -27,7 +27,7 @@ jobs:
 
   nix:
     needs: configure
-    runs-on: ${{ matrix.system == 'x86_64-linux' && 'ubuntu-latest' || 'macos-14' }}
+    runs-on: ${{ matrix.system == 'x86_64-linux' && 'ubuntu-latest' || 'macos-latest' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
