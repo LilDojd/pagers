@@ -263,12 +263,10 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
         return Ok(None);
     };
 
-    let (residency, _pages_in_core_before) = if O::MUTATES_RESIDENCY {
-        let r: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
-        let count = r.count_filled();
-        (Some(r), count)
+    let residency: Option<PM> = if O::MUTATES_RESIDENCY {
+        Some(crate::mincore::residency(&pf.mmap, pf.len)?)
     } else {
-        (None, 0)
+        None
     };
 
     let ctx = FileContext {

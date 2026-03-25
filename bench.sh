@@ -65,18 +65,18 @@ for i in "${!BIG_FILES[@]}"; do
   hyperfine \
     --warmup 2 \
     --min-runs 5 \
-    --prepare "$(printf '%q touch -q %q 2>/dev/null' "$PAGERS" "$f")" \
+    --prepare "$(printf '%q touch -o human %q 2>/dev/null' "$PAGERS" "$f")" \
     "$VMTOUCH $f" \
-    "$PAGERS query -q $f"
+    "$PAGERS query -o human $f"
 
   echo
   echo "=== 1b. Query uncached: ${size} file ==="
   hyperfine \
     --warmup 1 \
     --min-runs 5 \
-    --prepare "$(printf '%q evict -q %q 2>/dev/null' "$PAGERS" "$f")" \
+    --prepare "$(printf '%q evict -o human %q 2>/dev/null' "$PAGERS" "$f")" \
     "$VMTOUCH $f" \
-    "$PAGERS query -q $f"
+    "$PAGERS query -o human $f"
   echo
 done
 
@@ -89,9 +89,9 @@ for i in "${!BIG_FILES[@]}"; do
   hyperfine \
     --warmup 1 \
     --min-runs 5 \
-    --prepare "$(printf '%q touch -q %q 2>/dev/null' "$PAGERS" "$f")" \
+    --prepare "$(printf '%q touch -o human %q 2>/dev/null' "$PAGERS" "$f")" \
     "$VMTOUCH -e $f" \
-    "$PAGERS evict -q $f"
+    "$PAGERS evict -o human $f"
   echo
 done
 
@@ -99,9 +99,9 @@ echo "=== 2. Evict: directory tree ==="
 hyperfine \
   --warmup 1 \
   --min-runs 5 \
-  --prepare "$(printf '%q touch -q %q 2>/dev/null' "$PAGERS" "$TREE_DIR")" \
+  --prepare "$(printf '%q touch -o human %q 2>/dev/null' "$PAGERS" "$TREE_DIR")" \
   "$VMTOUCH -e $TREE_DIR" \
-  "$PAGERS evict -q $TREE_DIR"
+  "$PAGERS evict -o human $TREE_DIR"
 echo
 
 # 3. Touch time — big files
@@ -113,9 +113,9 @@ for i in "${!BIG_FILES[@]}"; do
   hyperfine \
     --warmup 1 \
     --min-runs 5 \
-    --prepare "$(printf '%q evict -q %q 2>/dev/null' "$PAGERS" "$f")" \
+    --prepare "$(printf '%q evict -o human %q 2>/dev/null' "$PAGERS" "$f")" \
     "$VMTOUCH -t $f" \
-    "$PAGERS touch -q $f"
+    "$PAGERS touch -o human $f"
   echo
 done
 
@@ -124,9 +124,9 @@ echo "=== 4. Touch: directory tree (1000 × 1 MiB) ==="
 hyperfine \
   --warmup 1 \
   --min-runs 5 \
-  --prepare "$(printf '%q evict -q %q 2>/dev/null' "$PAGERS" "$TREE_DIR")" \
+  --prepare "$(printf '%q evict -o human %q 2>/dev/null' "$PAGERS" "$TREE_DIR")" \
   "$VMTOUCH -t $TREE_DIR" \
-  "$PAGERS touch -q $TREE_DIR"
+  "$PAGERS touch -o human $TREE_DIR"
 echo
 
 # 5. Touch (half-resident) — file is 50% cached, touch the whole thing
@@ -139,10 +139,10 @@ for i in "${!BIG_FILES[@]}"; do
   hyperfine \
     --warmup 1 \
     --min-runs 5 \
-    --prepare "$(printf '%q evict -q %q && %q touch -q -p 0-%dM %q 2>/dev/null' \
+    --prepare "$(printf '%q evict -o human %q && %q touch -o human -p 0-%dM %q 2>/dev/null' \
       "$PAGERS" "$f" "$PAGERS" "$half_mb" "$f")" \
     "$VMTOUCH -t $f" \
-    "$PAGERS touch -q $f"
+    "$PAGERS touch -o human $f"
   echo
 done
 
@@ -151,6 +151,6 @@ echo "=== 6. Touch: batch mode (1000 files from file list) ==="
 hyperfine \
   --warmup 1 \
   --min-runs 5 \
-  --prepare "$(printf '%q evict -q %q 2>/dev/null' "$PAGERS" "$TREE_DIR")" \
+  --prepare "$(printf '%q evict -o human %q 2>/dev/null' "$PAGERS" "$TREE_DIR")" \
   "$VMTOUCH -t -b $BATCH_FILE" \
-  "$PAGERS touch -q -b $BATCH_FILE"
+  "$PAGERS touch -o human -b $BATCH_FILE"

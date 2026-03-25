@@ -86,15 +86,15 @@ impl PageMapSlice for [bool] {
 
 impl PageMapSlice for Vec<bool> {
     fn len(&self) -> usize {
-        self.len()
+        self.as_slice().len()
     }
 
     fn is_set(&self, index: usize) -> bool {
-        self[index]
+        self.as_slice().is_set(index)
     }
 
     fn count_filled(&self) -> usize {
-        self.iter().filter(|&&v| v).count()
+        self.as_slice().count_filled()
     }
 
     fn fill(&mut self, value: bool) {
@@ -137,15 +137,15 @@ mod bitvec_impl {
 
     impl PageMapSlice for BitVec {
         fn len(&self) -> usize {
-            self.len()
+            self.as_bitslice().len()
         }
 
         fn is_set(&self, index: usize) -> bool {
-            self[index]
+            self.as_bitslice().is_set(index)
         }
 
         fn count_filled(&self) -> usize {
-            self.count_ones()
+            self.as_bitslice().count_filled()
         }
 
         fn fill(&mut self, value: bool) {

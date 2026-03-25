@@ -101,7 +101,9 @@ impl OutputFormat<Json> for Summary {
             "elapsed": self.elapsed,
         });
         if has_action {
-            let obj = value.as_object_mut().unwrap();
+            let obj = value
+                .as_object_mut()
+                .expect("json! macro always produces an object");
             obj.insert(format!("{label}_pages"), self.action_pages.into());
             obj.insert(format!("{label}_size"), self.action_size.into());
             obj.insert(format!("{label}_percent"), self.action_pct.into());
