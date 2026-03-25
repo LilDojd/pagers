@@ -73,18 +73,24 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     {
         use rayon::prelude::*;
 
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(crawl_config.threads.num_threads())
+            .build()?;
+
         let buf = std::thread::available_parallelism().map_or(16, |n| n.get() * 4);
         let (tx, rx) = std::sync::mpsc::sync_channel::<PathBuf>(buf);
 
-        let outputs = rayon::scope(|s| {
-            s.spawn(|_| {
-                collect_file_paths_streaming(paths, crawl_config, &seen_inodes, stats, tx);
-            });
+        let outputs = pool.install(|| {
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    collect_file_paths_streaming(paths, crawl_config, &seen_inodes, stats, tx);
+                });
 
-            rx.into_iter()
-                .par_bridge()
-                .filter_map(|path| display.process_one::<O>(op, &path, range, stats))
-                .collect::<Vec<_>>()
+                rx.into_iter()
+                    .par_bridge()
+                    .filter_map(|path| display.process_one::<O>(op, &path, range, stats))
+                    .collect::<Vec<_>>()
+            })
         });
 
         display.finish();
