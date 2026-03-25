@@ -19,6 +19,8 @@ use pagers_core::mincore::PageMap;
 use pagers_core::ops::Stats;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use ratatui::{TerminalOptions, Viewport};
 
@@ -52,6 +54,44 @@ impl Drop for TerminalGuard {
     }
 }
 
+fn render_frame<PM: PageMap>(
+    files: &[&FileState<PM>],
+    file_rows_hwm: u16,
+    core_stats: &Stats,
+    elapsed: f64,
+    label: &str,
+    action_sign: isize,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let [files_area, stats_area] = ui::layout(file_rows_hwm, area);
+    ui::FileListWidget {
+        files,
+        max_rows: file_rows_hwm,
+    }
+    .render(files_area, buf);
+    stats::SummaryWidget {
+        stats: core_stats,
+        elapsed,
+        label,
+        action_sign,
+    }
+    .render(stats_area, buf);
+}
+
+fn drain_events<PM: PageMap>(
+    app: &mut App<PM>,
+    rx: &mpsc::Receiver<event::TuiEvent<PM>>,
+) -> app::ControlFlow {
+    while let Ok(evt) = rx.try_recv() {
+        match app.handle_event(evt) {
+            app::ControlFlow::Continue => {}
+            flow => return flow,
+        }
+    }
+    app::ControlFlow::Continue
+}
+
 pub fn run<PM: PageMap + Send + 'static>(
     rx: mpsc::Receiver<CoreEvent<PM>>,
     term: Arc<AtomicBool>,
@@ -68,79 +108,63 @@ pub fn run<PM: PageMap + Send + 'static>(
     let term_cleanup = Arc::clone(&term);
     let tui_rx = event::spawn_event_threads(rx, term);
     let mut app = App::new();
-    let mut quit = false;
-    let mut done = false;
     let mut file_rows_hwm: u16 = 0;
 
-    loop {
-        match tui_rx.recv_timeout(FRAME_BUDGET) {
-            Ok(evt) => match app.handle_event(evt) {
-                app::ControlFlow::Continue => {}
-                app::ControlFlow::Done => done = true,
-                app::ControlFlow::Quit => quit = true,
-            },
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
+    let flow = loop {
+        let flow = match tui_rx.recv_timeout(FRAME_BUDGET) {
+            Ok(evt) => app.handle_event(evt),
+            Err(mpsc::RecvTimeoutError::Timeout) => app::ControlFlow::Continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break app::ControlFlow::Quit,
+        };
 
-        if !done && !quit {
-            while let Ok(next) = tui_rx.try_recv() {
-                match app.handle_event(next) {
-                    app::ControlFlow::Continue => {}
-                    app::ControlFlow::Done => {
-                        done = true;
-                        break;
-                    }
-                    app::ControlFlow::Quit => {
-                        quit = true;
-                        break;
-                    }
-                }
-            }
-        }
+        let flow = match flow {
+            app::ControlFlow::Continue => drain_events(&mut app, &tui_rx),
+            other => other,
+        };
 
         let elapsed = start.elapsed().as_secs_f64();
         let files = app.visible_files(MAX_DISPLAY_FILES as usize);
         file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
         guard.terminal.draw(|frame| {
-            let [files_area, stats_area] = ui::layout(file_rows_hwm, frame.area());
-            ui::FileListWidget { files: &files, max_rows: file_rows_hwm }
-                .render(files_area, frame.buffer_mut());
-            stats::SummaryWidget {
-                stats: &core_stats,
+            render_frame(
+                &files,
+                file_rows_hwm,
+                &core_stats,
                 elapsed,
                 label,
                 action_sign,
-            }
-            .render(stats_area, frame.buffer_mut());
+                frame.area(),
+                frame.buffer_mut(),
+            );
         })?;
 
-        if done || quit {
-            break;
+        match flow {
+            app::ControlFlow::Continue => {}
+            other => break other,
         }
-    }
+    };
 
-    if quit {
+    if matches!(flow, app::ControlFlow::Quit) {
         term_cleanup.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    if !quit {
+    if matches!(flow, app::ControlFlow::Done) {
         let elapsed = start.elapsed().as_secs_f64();
         let files = app.visible_files(MAX_DISPLAY_FILES as usize);
         file_rows_hwm = file_rows_hwm.max(files.len().min(MAX_DISPLAY_FILES as usize) as u16);
         let total_lines = file_rows_hwm + stats::SUMMARY_LINES;
 
         let _ = guard.terminal.insert_before(total_lines, |buf| {
-            let [files_area, stats_area] = ui::layout(file_rows_hwm, buf.area);
-            ui::FileListWidget { files: &files, max_rows: file_rows_hwm }
-                .render(files_area, buf);
-            stats::SummaryWidget {
-                stats: &core_stats,
+            render_frame(
+                &files,
+                file_rows_hwm,
+                &core_stats,
                 elapsed,
                 label,
                 action_sign,
-            }
-            .render(stats_area, buf);
+                buf.area,
+                buf,
+            );
         });
     }
 
