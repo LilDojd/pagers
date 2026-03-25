@@ -9,6 +9,41 @@ use crate::mode::DisplayMode;
 use crate::ops::{FileRange, Op, Stats};
 use crate::par::{InodeSet, SeenInodes as _};
 
+#[cfg(feature = "rayon")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Threads {
+    All,
+    Exact(u16),
+}
+
+#[cfg(feature = "rayon")]
+impl Default for Threads {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl From<u16> for Threads {
+    fn from(n: u16) -> Self {
+        match n {
+            0 => Self::All,
+            n => Self::Exact(n),
+        }
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl Threads {
+    pub fn num_threads(self) -> usize {
+        match self {
+            Self::All => 0,
+            Self::Exact(n) => n as usize,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CrawlConfig {
@@ -229,4 +264,37 @@ pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>
             Err(e) => Some(Err(e)),
         })
         .collect()
+}
+
+#[cfg(test)]
+#[cfg(feature = "rayon")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn threads_from_zero_is_all() {
+        assert_eq!(Threads::from(0), Threads::All);
+    }
+
+    #[test]
+    fn threads_from_nonzero_is_exact() {
+        assert_eq!(Threads::from(4), Threads::Exact(4));
+        assert_eq!(Threads::from(1), Threads::Exact(1));
+    }
+
+    #[test]
+    fn threads_default_is_all() {
+        assert_eq!(Threads::default(), Threads::All);
+    }
+
+    #[test]
+    fn threads_num_threads_all_is_zero() {
+        assert_eq!(Threads::All.num_threads(), 0);
+    }
+
+    #[test]
+    fn threads_num_threads_exact() {
+        assert_eq!(Threads::Exact(8).num_threads(), 8);
+        assert_eq!(Threads::Exact(1).num_threads(), 1);
+    }
 }
