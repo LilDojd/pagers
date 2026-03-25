@@ -223,9 +223,10 @@ pub(crate) fn full_process_file<O: Op, PM: PageMap + Sync>(
     let output = op.execute(&ctx)?;
 
     let (pages_in_core_after, residency_before, residency_after) = if O::MUTATES_RESIDENCY {
-        let res: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
-        let count = res.count_filled();
-        (count, Some(residency_before), Some(res))
+        let fill = O::ACTION_SIGN >= 0;
+        let after = PM::from_bools(std::iter::repeat_n(fill, pf.total_pages));
+        let count = if fill { pf.total_pages } else { 0 };
+        (count, Some(residency_before), Some(after))
     } else {
         (pages_in_core_before, None, Some(residency_before))
     };
@@ -249,6 +250,14 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
         return Ok(None);
     };
 
+    let (residency, _pages_in_core_before) = if O::MUTATES_RESIDENCY {
+        let r: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
+        let count = r.count_filled();
+        (Some(r), count)
+    } else {
+        (None, 0)
+    };
+
     let ctx = FileContext {
         file: &pf.file,
         path,
@@ -256,11 +265,20 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
         offset: pf.offset,
         len: pf.len,
         on_progress: None,
-        residency: None::<&PM>,
+        residency: residency.as_ref(),
     };
 
     let output = op.execute(&ctx)?;
-    let pages_in_core_after = counts_page_count::<PM>(&pf.file, &pf.mmap, pf.offset, pf.len)?;
+
+    let pages_in_core_after = if O::MUTATES_RESIDENCY {
+        if O::ACTION_SIGN >= 0 {
+            pf.total_pages
+        } else {
+            0
+        }
+    } else {
+        counts_page_count::<PM>(&pf.file, &pf.mmap, pf.offset, pf.len)?
+    };
 
     Ok(Some(ops::CountsResult {
         output,
