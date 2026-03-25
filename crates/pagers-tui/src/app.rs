@@ -96,6 +96,14 @@ impl<PM: PageMap> App<PM> {
         });
         if files.len() > max {
             files.retain(|f| !f.done);
+            if files.is_empty() {
+                files = self.files.iter().collect();
+                files.sort_by(|a, b| {
+                    b.total_pages
+                        .cmp(&a.total_pages)
+                        .then_with(|| a.path.cmp(&b.path))
+                });
+            }
         }
         files.truncate(max);
         files
@@ -242,6 +250,24 @@ mod tests {
         let vis = app.visible_files(8);
         assert_eq!(vis.len(), 1);
         assert!(vis[0].done);
+    }
+
+    #[test]
+    fn test_visible_files_all_done_overflow_shows_largest() {
+        let mut app = App::new();
+        for i in 0..3 {
+            let path: Arc<str> = format!("/{i}.bin").into();
+            app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+                path: path.clone(),
+                total_pages: (i + 1) * 100,
+                residency: bitvec::bitvec![0; (i + 1) * 100],
+            }));
+            app.handle_event(TuiEvent::Core(CoreEvent::FileDone { path }));
+        }
+        let vis = app.visible_files(2);
+        assert_eq!(vis.len(), 2);
+        assert_eq!(&*vis[0].path, "/2.bin");
+        assert_eq!(&*vis[1].path, "/1.bin");
     }
 
     #[test]
