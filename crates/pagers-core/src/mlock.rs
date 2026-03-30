@@ -4,26 +4,34 @@ use memmap2::Mmap;
 use nix::errno::Errno;
 use nix::sys::mman::{MlockAllFlags, mlockall};
 
-fn eperm_message(call: &str) -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::PermissionDenied,
-        format!("{call} failed — may need SYS_IPC_LOCK capability or higher memory limits"),
-    )
-}
+use crate::error::MlockError;
 
-pub fn mlock(mmap: &Mmap, len: usize) -> std::io::Result<()> {
+pub fn mlock(mmap: &Mmap, len: usize) -> crate::Result<()> {
     // SAFETY: mmap.as_ptr() points to a valid memory-mapped region of at least `len` bytes.
     let addr = NonNull::new(mmap.as_ptr() as *mut std::ffi::c_void)
         .expect("mmap pointer should never be null");
     unsafe { nix::sys::mman::mlock(addr, len) }.map_err(|e| match e {
-        Errno::EPERM => eperm_message("mlock"),
-        other => other.into(),
-    })
+        Errno::EPERM => MlockError::PermissionDenied { call: "mlock" },
+        Errno::ENOMEM => MlockError::OutOfMemory { call: "mlock", len },
+        other => MlockError::Other {
+            call: "mlock",
+            source: other.into(),
+        },
+    })?;
+    Ok(())
 }
 
-pub fn mlockall_current() -> std::io::Result<()> {
+pub fn mlockall_current() -> crate::Result<()> {
     mlockall(MlockAllFlags::MCL_CURRENT).map_err(|e| match e {
-        Errno::EPERM => eperm_message("mlockall"),
-        other => other.into(),
-    })
+        Errno::EPERM => MlockError::PermissionDenied { call: "mlockall" },
+        Errno::ENOMEM => MlockError::OutOfMemory {
+            call: "mlockall",
+            len: 0,
+        },
+        other => MlockError::Other {
+            call: "mlockall",
+            source: other.into(),
+        },
+    })?;
+    Ok(())
 }

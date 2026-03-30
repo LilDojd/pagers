@@ -104,7 +104,7 @@ pub(crate) struct PreparedFile {
 pub(crate) fn prepare_file(path: &Path, range: &FileRange) -> crate::Result<Option<PreparedFile>> {
     let io_err = |e| Error::io(path.display().to_string(), e);
 
-    let file = File::open(path).map_err(io_err)?;
+    let file = fs_err::File::open(path).map_err(io_err)?;
     let file_len = file.metadata().map_err(io_err)?.len();
 
     if file_len == 0 {
@@ -124,12 +124,12 @@ pub(crate) fn prepare_file(path: &Path, range: &FileRange) -> crate::Result<Opti
         MmapOptions::new()
             .offset(offset)
             .len(len)
-            .map(&file)
+            .map(file.file())
             .map_err(io_err)?
     });
 
     Ok(Some(PreparedFile {
-        file,
+        file: file.into_file(),
         offset,
         len,
         total_pages,
@@ -158,7 +158,7 @@ pub fn file_info<PM: PageMap>(
 ) -> crate::Result<Option<FileInfo<PM>>> {
     let io_err = |e| Error::io(path.display().to_string(), e);
 
-    let file = File::open(path).map_err(io_err)?;
+    let file = fs_err::File::open(path).map_err(io_err)?;
     let file_len = file.metadata().map_err(io_err)?.len();
 
     let Some((offset, len)) = effective_range(file_len, range) else {
@@ -170,7 +170,7 @@ pub fn file_info<PM: PageMap>(
         MmapOptions::new()
             .offset(offset)
             .len(len)
-            .map(&file)
+            .map(file.file())
             .map_err(io_err)?
     };
     let residency: PM = crate::mincore::residency(&mmap, len)?;
@@ -272,9 +272,13 @@ mod tests {
                     mode::counts_process_file::<Evict, $t>(&Evict, f.path(), &range).unwrap();
                     mode::counts_process_file::<Touch, $t>(&Touch, f.path(), &range).unwrap();
 
-                    let file = std::fs::File::open(f.path()).unwrap();
-                    let mmap_check =
-                        unsafe { memmap2::MmapOptions::new().len(size).map(&file).unwrap() };
+                    let file = fs_err::File::open(f.path()).unwrap();
+                    let mmap_check = unsafe {
+                        memmap2::MmapOptions::new()
+                            .len(size)
+                            .map(file.file())
+                            .unwrap()
+                    };
                     let residency: $t = crate::mincore::residency(&mmap_check, size).unwrap();
                     assert!(
                         (0..residency.len()).all(|i| residency[i..i + 1].count_filled() == 1),

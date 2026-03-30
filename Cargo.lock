@@ -730,6 +730,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "fs-err"
+version = "3.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73fde052dbfc920003cfd2c8e2c6e6d4cc7c1091538c3a24226cec0665ab08c0"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1239,6 +1248,7 @@ dependencies = [
  "clap-verbosity-flag",
  "clap_complete",
  "clap_mangen",
+ "fs-err",
  "nix 0.31.2",
  "pagers-core",
  "pagers-tui",
@@ -1257,6 +1267,7 @@ dependencies = [
  "bitvec",
  "criterion",
  "dashmap",
+ "fs-err",
  "humantime",
  "ignore",
  "libc",

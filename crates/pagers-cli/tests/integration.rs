@@ -1,4 +1,3 @@
-use std::fs;
 use std::io::Write;
 use std::process::Command;
 
@@ -15,7 +14,7 @@ fn parse_json(output: &std::process::Output) -> serde_json::Value {
 fn test_query_single_file() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    let mut f = fs::File::create(&file_path).unwrap();
+    let mut f = fs_err::File::create(&file_path).unwrap();
     f.write_all(&vec![0u8; 4096 * 10]).unwrap();
     f.flush().unwrap();
 
@@ -38,7 +37,7 @@ fn test_query_single_file() {
 fn test_touch_single_file() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    let mut f = fs::File::create(&file_path).unwrap();
+    let mut f = fs_err::File::create(&file_path).unwrap();
     f.write_all(&vec![0xABu8; 4096 * 100]).unwrap();
     f.flush().unwrap();
 
@@ -60,7 +59,7 @@ fn test_touch_single_file() {
 fn test_evict_single_file() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    let mut f = fs::File::create(&file_path).unwrap();
+    let mut f = fs_err::File::create(&file_path).unwrap();
     f.write_all(&vec![0xABu8; 4096 * 10]).unwrap();
     f.flush().unwrap();
 
@@ -83,7 +82,7 @@ fn test_query_directory() {
     let dir = tempfile::tempdir().unwrap();
     for i in 0..5 {
         let file_path = dir.path().join(format!("file{i}.dat"));
-        let mut f = fs::File::create(&file_path).unwrap();
+        let mut f = fs_err::File::create(&file_path).unwrap();
         f.write_all(&vec![0u8; 4096]).unwrap();
     }
 
@@ -105,7 +104,7 @@ fn test_query_directory() {
 fn test_kv_output() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    let mut f = fs::File::create(&file_path).unwrap();
+    let mut f = fs_err::File::create(&file_path).unwrap();
     f.write_all(&vec![0u8; 4096]).unwrap();
     f.flush().unwrap();
 
@@ -128,7 +127,7 @@ fn test_kv_output() {
 fn test_json_output() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    let mut f = fs::File::create(&file_path).unwrap();
+    let mut f = fs_err::File::create(&file_path).unwrap();
     f.write_all(&vec![0u8; 4096]).unwrap();
     f.flush().unwrap();
 
@@ -152,7 +151,7 @@ fn test_json_output() {
 fn test_quiet_mode() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    let mut f = fs::File::create(&file_path).unwrap();
+    let mut f = fs_err::File::create(&file_path).unwrap();
     f.write_all(&vec![0u8; 4096]).unwrap();
 
     let output = pagers_bin()
@@ -184,10 +183,10 @@ fn test_max_file_size_filter() {
     let dir = tempfile::tempdir().unwrap();
 
     let small = dir.path().join("small.dat");
-    fs::write(&small, vec![0u8; 100]).unwrap();
+    fs_err::write(&small, vec![0u8; 100]).unwrap();
 
     let large = dir.path().join("large.dat");
-    fs::write(&large, vec![0u8; 100_000]).unwrap();
+    fs_err::write(&large, vec![0u8; 100_000]).unwrap();
 
     let output = pagers_bin()
         .args([
@@ -217,7 +216,7 @@ fn test_max_file_size_filter() {
 fn test_touch_then_query_shows_resident() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+    fs_err::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
 
     let output = pagers_bin()
         .args(["touch", "-o", "human", file_path.to_str().unwrap()])
@@ -241,7 +240,7 @@ fn build_out_dir() -> std::path::PathBuf {
     let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_pagers"));
     let profile_dir = bin.parent().unwrap();
     let build_dir = profile_dir.join("build");
-    for entry in fs::read_dir(&build_dir).expect("build dir not found") {
+    for entry in fs_err::read_dir(&build_dir).expect("build dir not found") {
         let entry = entry.unwrap();
         if entry.file_name().to_string_lossy().starts_with("pagers-") {
             let out = entry.path().join("out");
@@ -257,7 +256,7 @@ fn build_out_dir() -> std::path::PathBuf {
 fn test_evict_then_query_runs_successfully() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+    fs_err::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
 
     let output = pagers_bin()
         .args(["touch", "-o", "human", file_path.to_str().unwrap()])
@@ -286,7 +285,7 @@ fn test_evict_then_query_runs_successfully() {
 fn test_query_empty_file() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("empty.dat");
-    fs::File::create(&file_path).unwrap();
+    fs_err::File::create(&file_path).unwrap();
 
     let output = pagers_bin()
         .args(["query", "-o", "human", file_path.to_str().unwrap()])
@@ -319,7 +318,7 @@ fn test_query_nonexistent_file() {
 fn test_query_with_range() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0u8; 4096 * 100]).unwrap();
+    fs_err::write(&file_path, vec![0u8; 4096 * 100]).unwrap();
 
     let output = pagers_bin()
         .args([
@@ -345,8 +344,8 @@ fn test_query_with_range() {
 #[test]
 fn test_query_with_ignore_pattern() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("keep.txt"), vec![0u8; 4096]).unwrap();
-    fs::write(dir.path().join("skip.log"), vec![0u8; 4096]).unwrap();
+    fs_err::write(dir.path().join("keep.txt"), vec![0u8; 4096]).unwrap();
+    fs_err::write(dir.path().join("skip.log"), vec![0u8; 4096]).unwrap();
 
     let output = pagers_bin()
         .args([
@@ -371,8 +370,8 @@ fn test_query_with_ignore_pattern() {
 #[test]
 fn test_query_with_filter_pattern() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("data.bin"), vec![0u8; 4096]).unwrap();
-    fs::write(dir.path().join("notes.txt"), vec![0u8; 4096]).unwrap();
+    fs_err::write(dir.path().join("data.bin"), vec![0u8; 4096]).unwrap();
+    fs_err::write(dir.path().join("notes.txt"), vec![0u8; 4096]).unwrap();
 
     let output = pagers_bin()
         .args([
@@ -398,7 +397,7 @@ fn test_query_with_filter_pattern() {
 fn test_touch_json_output() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0u8; 4096 * 10]).unwrap();
+    fs_err::write(&file_path, vec![0u8; 4096 * 10]).unwrap();
 
     let output = pagers_bin()
         .args(["touch", "-o", "json", file_path.to_str().unwrap()])
@@ -418,7 +417,7 @@ fn test_touch_json_output() {
 fn test_evict_json_output() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0u8; 4096 * 10]).unwrap();
+    fs_err::write(&file_path, vec![0u8; 4096 * 10]).unwrap();
 
     let output = pagers_bin()
         .args(["evict", "-o", "json", file_path.to_str().unwrap()])
@@ -439,8 +438,8 @@ fn test_query_multiple_files() {
     let dir = tempfile::tempdir().unwrap();
     let f1 = dir.path().join("a.dat");
     let f2 = dir.path().join("b.dat");
-    fs::write(&f1, vec![0u8; 4096]).unwrap();
-    fs::write(&f2, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f1, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f2, vec![0u8; 4096]).unwrap();
 
     let output = pagers_bin()
         .args([
@@ -463,11 +462,11 @@ fn test_batch_from_file() {
     let dir = tempfile::tempdir().unwrap();
     let f1 = dir.path().join("a.dat");
     let f2 = dir.path().join("b.dat");
-    fs::write(&f1, vec![0u8; 4096]).unwrap();
-    fs::write(&f2, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f1, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f2, vec![0u8; 4096]).unwrap();
 
     let batch_file = dir.path().join("paths.txt");
-    fs::write(&batch_file, format!("{}\n{}\n", f1.display(), f2.display())).unwrap();
+    fs_err::write(&batch_file, format!("{}\n{}\n", f1.display(), f2.display())).unwrap();
 
     let output = pagers_bin()
         .args(["query", "-b", batch_file.to_str().unwrap(), "-o", "kv"])
@@ -489,9 +488,9 @@ fn test_batch_nul_delimited() {
     let f1 = dir.path().join("a.dat");
     let f2 = dir.path().join("b.dat");
     let f3 = dir.path().join("c.dat");
-    fs::write(&f1, vec![0u8; 4096]).unwrap();
-    fs::write(&f2, vec![0u8; 4096]).unwrap();
-    fs::write(&f3, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f1, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f2, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f3, vec![0u8; 4096]).unwrap();
 
     let batch_file = dir.path().join("paths.0");
     let mut content = Vec::new();
@@ -499,7 +498,7 @@ fn test_batch_nul_delimited() {
         content.extend_from_slice(f.to_str().unwrap().as_bytes());
         content.push(b'\0');
     }
-    fs::write(&batch_file, &content).unwrap();
+    fs_err::write(&batch_file, &content).unwrap();
 
     let output = pagers_bin()
         .args([
@@ -527,11 +526,11 @@ fn test_batch_combined_with_positional_args() {
     let dir = tempfile::tempdir().unwrap();
     let f1 = dir.path().join("positional.dat");
     let f2 = dir.path().join("batched.dat");
-    fs::write(&f1, vec![0u8; 4096]).unwrap();
-    fs::write(&f2, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f1, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f2, vec![0u8; 4096]).unwrap();
 
     let batch_file = dir.path().join("paths.txt");
-    fs::write(&batch_file, format!("{}\n", f2.display())).unwrap();
+    fs_err::write(&batch_file, format!("{}\n", f2.display())).unwrap();
 
     let output = pagers_bin()
         .args([
@@ -559,8 +558,8 @@ fn test_batch_stdin() {
     let dir = tempfile::tempdir().unwrap();
     let f1 = dir.path().join("a.dat");
     let f2 = dir.path().join("b.dat");
-    fs::write(&f1, vec![0u8; 4096]).unwrap();
-    fs::write(&f2, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f1, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f2, vec![0u8; 4096]).unwrap();
 
     let output = pagers_bin()
         .args(["query", "-b", "-", "-o", "kv"])
@@ -590,10 +589,10 @@ fn test_batch_stdin() {
 fn test_batch_empty_lines_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let f1 = dir.path().join("a.dat");
-    fs::write(&f1, vec![0u8; 4096]).unwrap();
+    fs_err::write(&f1, vec![0u8; 4096]).unwrap();
 
     let batch_file = dir.path().join("paths.txt");
-    fs::write(&batch_file, format!("\n\n{}\n\n", f1.display())).unwrap();
+    fs_err::write(&batch_file, format!("\n\n{}\n\n", f1.display())).unwrap();
 
     let output = pagers_bin()
         .args(["query", "-b", batch_file.to_str().unwrap(), "-o", "kv"])
@@ -613,8 +612,8 @@ fn test_batch_empty_lines_skipped() {
 fn test_touch_reports_nonzero_touched_and_resident() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
-    fs::File::open(&file_path).unwrap().sync_all().unwrap();
+    fs_err::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+    fs_err::File::open(&file_path).unwrap().sync_all().unwrap();
 
     // Evict first so touch has pages to bring in
     let output = pagers_bin()
@@ -642,7 +641,7 @@ fn test_touch_reports_nonzero_touched_and_resident() {
 fn test_evict_reports_nonzero_evicted() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
+    fs_err::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
 
     // Touch first
     let output = pagers_bin()
@@ -672,7 +671,7 @@ fn test_evict_reports_nonzero_evicted() {
 fn test_query_shows_only_resident() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
+    fs_err::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
 
     let output = pagers_bin()
         .args(["query", "-o", "json", file_path.to_str().unwrap()])
@@ -696,8 +695,8 @@ fn test_query_shows_only_resident() {
 fn test_touch_then_evict_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0xABu8; 4096 * 30]).unwrap();
-    fs::File::open(&file_path).unwrap().sync_all().unwrap();
+    fs_err::write(&file_path, vec![0xABu8; 4096 * 30]).unwrap();
+    fs_err::File::open(&file_path).unwrap().sync_all().unwrap();
 
     // Touch
     let output = pagers_bin()
@@ -742,8 +741,8 @@ fn test_touch_directory_reports_counts() {
     let dir = tempfile::tempdir().unwrap();
     for i in 0..5 {
         let path = dir.path().join(format!("f{i}.dat"));
-        fs::write(&path, vec![0xABu8; 4096 * 10]).unwrap();
-        fs::File::open(&path).unwrap().sync_all().unwrap();
+        fs_err::write(&path, vec![0xABu8; 4096 * 10]).unwrap();
+        fs_err::File::open(&path).unwrap().sync_all().unwrap();
     }
 
     // Evict first so touch has pages to bring in
@@ -769,8 +768,8 @@ fn test_touch_directory_reports_counts() {
 fn test_touch_kv_has_both_metrics() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
-    fs::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
-    fs::File::open(&file_path).unwrap().sync_all().unwrap();
+    fs_err::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
+    fs_err::File::open(&file_path).unwrap().sync_all().unwrap();
 
     // Evict first so touch has pages to bring in
     let output = pagers_bin()
@@ -798,14 +797,14 @@ fn test_touch_kv_has_both_metrics() {
 fn test_completions_zsh() {
     let dir = build_out_dir();
     let content =
-        fs::read_to_string(dir.join("_pagers")).expect("zsh completion file not generated");
+        fs_err::read_to_string(dir.join("_pagers")).expect("zsh completion file not generated");
     assert!(content.contains("#compdef pagers"), "content: {content}");
 }
 
 #[test]
 fn test_completions_bash() {
     let dir = build_out_dir();
-    let content =
-        fs::read_to_string(dir.join("pagers.bash")).expect("bash completion file not generated");
+    let content = fs_err::read_to_string(dir.join("pagers.bash"))
+        .expect("bash completion file not generated");
     assert!(content.contains("pagers"), "content: {content}");
 }

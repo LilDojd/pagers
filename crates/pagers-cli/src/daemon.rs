@@ -70,7 +70,7 @@ pub(crate) fn hold(
     notify_fd: Option<OwnedFd>,
 ) {
     if let Some(p) = &inner.pidfile
-        && let Err(e) = std::fs::write(p, format!("{}\n", std::process::id()))
+        && let Err(e) = fs_err::write(p, format!("{}\n", std::process::id()))
     {
         ::tracing::warn!("pidfile: {e}");
     }
@@ -94,6 +94,6 @@ pub(crate) fn hold(
     }
 
     if let Some(p) = &inner.pidfile {
-        let _ = std::fs::remove_file(p);
+        let _ = fs_err::remove_file(p);
     }
 }

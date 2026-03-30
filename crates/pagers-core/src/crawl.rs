@@ -174,7 +174,7 @@ fn walk_dir_entries(
 
         let entry_path = entry.path();
         let meta = if needs_meta {
-            entry_path.metadata().ok()
+            fs_err::metadata(entry_path).ok()
         } else {
             None
         };
@@ -209,7 +209,7 @@ pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>
     let reader: Box<dyn BufRead> = if path == Path::new("-") {
         Box::new(io::stdin().lock())
     } else {
-        Box::new(io::BufReader::new(std::fs::File::open(path)?))
+        Box::new(io::BufReader::new(fs_err::File::open(path)?))
     };
 
     let delim = if nul_delim { b'\0' } else { b'\n' };

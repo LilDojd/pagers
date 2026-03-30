@@ -21,6 +21,7 @@ log-max-level-info = ["tracing/max_level_info"]
 serde = { version = "1", features = ["derive"], optional = true }
 bitvec = { workspace = true, optional = true }
 dashmap = { version = "6", optional = true }
+fs-err = { workspace = true }
 humantime = { workspace = true }
 ignore = "0.4"
 libc = "0.2"

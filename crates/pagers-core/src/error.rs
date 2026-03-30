@@ -1,5 +1,32 @@
 use std::{num::TryFromIntError, path::PathBuf};
 
+const MLOCK_HINT: &str = "\
+\n\nPossible fixes:\
+\n  ulimit -l unlimited\
+\n  setcap cap_ipc_lock+ep <binary>\
+\n  # Kubernetes:\
+\n  securityContext:\
+\n    capabilities:\
+\n      add: [\"IPC_LOCK\"]";
+
+#[derive(Debug, thiserror::Error)]
+pub enum MlockError {
+    #[error("{call} failed: permission denied (EPERM){}", MLOCK_HINT)]
+    PermissionDenied { call: &'static str },
+
+    #[error(
+        "{call} failed: cannot lock {len} bytes — RLIMIT_MEMLOCK too low (ENOMEM){}",
+        MLOCK_HINT
+    )]
+    OutOfMemory { call: &'static str, len: usize },
+
+    #[error("{call}: {source}")]
+    Other {
+        call: &'static str,
+        source: std::io::Error,
+    },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{context}: {source}")]
@@ -7,6 +34,9 @@ pub enum Error {
         context: String,
         source: std::io::Error,
     },
+
+    #[error(transparent)]
+    Mlock(#[from] MlockError),
 
     #[error("{0}")]
     Syscall(#[from] nix::errno::Errno),
