@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6] - 2026-03-30
+
+### Documentation
+
+- *(README)* Add linux benches
+
+### Features
+
+- Switch to fs_err and improve error messages
+
+### Miscellaneous Tasks
+
+- Update deps
+
+### Flake.lock
+
+- Update (#10) ([#10](https://github.com/LilDojd/pagers/pull/10))
+
 ## [0.1.5] - 2026-03-25
 
 ### Bug Fixes
@@ -12,6 +30,10 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - Support q key to quit TUI alongside Ctrl+C
+
+### Miscellaneous Tasks
+
+- *(release)* Prepare for v0.1.5
 
 ### Performance
 
