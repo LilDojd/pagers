@@ -32,6 +32,9 @@ pub enum Error {
     #[error("operation cancelled")]
     Cancelled,
 
+    #[error("file worker thread panicked")]
+    WorkerPanic,
+
     #[error("{context}: {source}")]
     Io {
         context: String,

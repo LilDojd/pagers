@@ -284,6 +284,9 @@ fn test_query_directory() {
         let mut f = fs_err::File::create(&file_path).unwrap();
         f.write_all(&vec![0u8; 4096]).unwrap();
     }
+    let nested = dir.path().join("nested");
+    fs_err::create_dir(&nested).unwrap();
+    fs_err::write(nested.join("file.dat"), vec![0u8; 4096]).unwrap();
 
     let output = pagers_bin()
         .args(["query", "-o", "human", dir.path().to_str().unwrap()])
@@ -296,7 +299,8 @@ fn test_query_directory() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Files: 5"), "stdout: {stdout}");
+    assert!(stdout.contains("Files: 6"), "stdout: {stdout}");
+    assert!(stdout.contains("Directories: 2"), "stdout: {stdout}");
 }
 
 #[test]

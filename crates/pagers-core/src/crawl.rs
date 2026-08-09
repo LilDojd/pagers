@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 use std::io::{self, BufRead};
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use dua_core::Order;
 
@@ -79,25 +79,62 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     tracing::info!("starting {} on {} path(s)", O::LABEL, paths.len());
     validate_patterns(crawl_config)?;
     let mut seen_inodes = HashSet::new();
-    let mut outputs = Vec::new();
-    let result = collect_paths(
+    let mut files = Vec::new();
+    let collection = collect_paths(
         paths,
         crawl_config,
         &mut seen_inodes,
         stats,
         cancellation,
         |path| {
-            if let Some(output) =
-                display.process_one::<O>(op, &path, range, stats, cancellation)?
-            {
-                outputs.push(output);
-            }
+            files.push(path);
             Ok(())
         },
     );
+    if let Err(error) = collection {
+        display.finish();
+        return Err(error);
+    }
+
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let outputs = Mutex::new(Vec::with_capacity(files.len()));
+    let first_error = Mutex::new(None);
+    let workers = crawl_config.threads.get().min(files.len());
+    let worker_result: crate::Result<()> = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            handles.push(scope.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = files.get(index) else {
+                        break;
+                    };
+                    match display.process_one::<O>(op, path, range, stats, cancellation) {
+                        Ok(Some(output)) => outputs.lock().unwrap().push((index, output)),
+                        Ok(None) => {}
+                        Err(error) => {
+                            stop.store(true, Ordering::Relaxed);
+                            let mut first = first_error.lock().unwrap();
+                            if first.is_none() {
+                                *first = Some(error);
+                            }
+                        }
+                    }
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().map_err(|_| crate::Error::WorkerPanic)?;
+        }
+        Ok(())
+    });
 
     display.finish();
-    result?;
+    worker_result?;
+    if let Some(error) = first_error.into_inner().unwrap() {
+        return Err(error);
+    }
     cancellation.check()?;
     op.finish()?;
     tracing::info!(
@@ -105,7 +142,9 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
         stats.total_files.load(Ordering::Relaxed),
         stats.total_pages.load(Ordering::Relaxed),
     );
-    Ok(outputs)
+    let mut outputs = outputs.into_inner().unwrap();
+    outputs.sort_unstable_by_key(|(index, _)| *index);
+    Ok(outputs.into_iter().map(|(_, output)| output).collect())
 }
 
 pub fn validate_patterns(config: &CrawlConfig) -> crate::Result<()> {
@@ -145,6 +184,7 @@ fn collect_paths(
                 crawl_config,
                 needs_meta,
                 seen_inodes,
+                stats,
                 cancellation,
                 &mut emit,
             )?;
@@ -205,6 +245,7 @@ fn walk_dir_entries(
     config: &CrawlConfig,
     needs_meta: bool,
     seen_inodes: &mut HashSet<(u64, u64)>,
+    stats: &Stats,
     cancellation: &Cancellation,
     mut emit: impl FnMut(PathBuf) -> crate::Result<()>,
 ) -> crate::Result<()> {
@@ -287,6 +328,7 @@ fn walk_dir_entries(
                     continue;
                 }
                 if metadata.is_dir() {
+                    stats.total_dirs.fetch_add(1, Ordering::Relaxed);
                     let target = fs_err::canonicalize(&physical_path).map_err(|error| {
                         crate::Error::io(logical_path.display().to_string(), error)
                     })?;
@@ -304,6 +346,11 @@ fn walk_dir_entries(
                 {
                     emit(logical_path)?;
                 }
+                continue;
+            }
+
+            if entry.file_type.is_dir() {
+                stats.total_dirs.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
 
@@ -446,6 +493,9 @@ pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mode::Cli;
+    use crate::ops::{FileContext, Op, ResidencyEffect};
+    use std::sync::atomic::AtomicUsize;
     use crate::Cancellation;
 
     #[test]
@@ -490,5 +540,63 @@ mod tests {
 
         assert!(emitted.is_empty());
         assert!(matches!(result, Err(crate::Error::Cancelled)));
+    }
+
+    #[test]
+    fn file_operations_use_requested_parallelism() {
+        struct ConcurrentOp {
+            active: AtomicUsize,
+            max_active: AtomicUsize,
+        }
+
+        impl Op for ConcurrentOp {
+            const LABEL: &'static str = "test";
+            const EFFECT: ResidencyEffect = ResidencyEffect::Preserve;
+            type Output = ();
+
+            fn execute<PM: PageMap + Sync>(
+                &self,
+                _ctx: &FileContext<'_, PM>,
+            ) -> crate::Result<()> {
+                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.max_active.fetch_max(active, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..4 {
+            fs_err::write(dir.path().join(index.to_string()), vec![0u8; 4096]).unwrap();
+        }
+        let config = CrawlConfig {
+            follow_symlinks: false,
+            single_filesystem: false,
+            count_hardlinks: true,
+            ignore_patterns: Vec::new(),
+            filter_patterns: Vec::new(),
+            max_file_size: None,
+            batch: None,
+            nul_delim: false,
+            threads: Threads::Exact(NonZeroU16::new(2).unwrap()),
+        };
+        let op = ConcurrentOp {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+        };
+
+        crawl_and_process::<_, crate::mincore::DefaultPageMap, _>(
+            &[dir.path().to_owned()],
+            &config,
+            &op,
+            &FileRange::full(),
+            &Stats::new(),
+            &Cli,
+            &Cancellation::new(),
+        )
+        .unwrap();
+
+        assert_eq!(op.max_active.load(Ordering::SeqCst), 2);
     }
 }
