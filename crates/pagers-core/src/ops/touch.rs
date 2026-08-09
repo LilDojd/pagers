@@ -51,13 +51,14 @@ impl Op for Touch {
 }
 
 fn initiate_readahead<PM: PageMap>(ctx: &FileContext<'_, PM>) {
-    let offset = ctx.offset() as libc::off_t;
-    let len = ctx.len() as libc::off_t;
+    let len = ctx.len();
 
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsFd;
         let fd = ctx.file().as_fd();
+        let offset = ctx.offset() as libc::off_t;
+        let len = len as libc::off_t;
         let _ = nix::fcntl::posix_fadvise(
             fd,
             offset,
@@ -72,5 +73,5 @@ fn initiate_readahead<PM: PageMap>(ctx: &FileContext<'_, PM>) {
         );
     }
 
-    let _ = ctx.mmap().advise_range(Advice::WillNeed, 0, len as usize);
+    let _ = ctx.mmap().advise_range(Advice::WillNeed, 0, len);
 }
