@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::mincore::{DefaultPageMap, PageMap, PageMapSlice as _};
@@ -9,7 +8,7 @@ use crate::state::FileState;
 
 pub(crate) struct App<PM: PageMap = DefaultPageMap> {
     files: Vec<FileState<PM>>,
-    file_index: HashMap<Arc<str>, usize>,
+    file_index: HashMap<usize, usize>,
 }
 
 pub enum ControlFlow {
@@ -35,13 +34,14 @@ impl<PM: PageMap> App<PM> {
     pub(crate) fn handle_event(&mut self, event: TuiEvent<PM>) -> ControlFlow {
         match event {
             TuiEvent::Core(CoreEvent::FileStart {
+                id,
                 path,
                 total_pages,
                 residency,
             }) => {
                 let pages_in_core = residency.count_filled();
                 let idx = self.files.len();
-                self.file_index.insert(path.clone(), idx);
+                self.file_index.insert(id, idx);
                 self.files.push(FileState {
                     path,
                     total_pages,
@@ -52,12 +52,12 @@ impl<PM: PageMap> App<PM> {
                 ControlFlow::Continue
             }
             TuiEvent::Core(CoreEvent::FileProgress {
-                path,
+                id,
                 page_offset,
                 pages_walked,
                 resident,
             }) => {
-                if let Some(&idx) = self.file_index.get(&path) {
+                if let Some(&idx) = self.file_index.get(&id) {
                     let file = &mut self.files[idx];
                     let start = page_offset;
                     let end = (page_offset + pages_walked).min(file.residency.len());
@@ -70,8 +70,8 @@ impl<PM: PageMap> App<PM> {
                 }
                 ControlFlow::Continue
             }
-            TuiEvent::Core(CoreEvent::FileDone { path }) => {
-                if let Some(&idx) = self.file_index.get(&path) {
+            TuiEvent::Core(CoreEvent::FileDone { id }) => {
+                if let Some(&idx) = self.file_index.get(&id) {
                     self.files[idx].done = true;
                     self.trim_completed();
                 }
@@ -120,12 +120,15 @@ impl<PM: PageMap> App<PM> {
             .map(|(index, _)| index)
             .expect("at least one completed file");
         self.files.remove(remove);
-        self.file_index = self
-            .files
-            .iter()
-            .enumerate()
-            .map(|(index, file)| (Arc::clone(&file.path), index))
-            .collect();
+        self.file_index.retain(|_, index| {
+            if *index == remove {
+                return false;
+            }
+            if *index > remove {
+                *index -= 1;
+            }
+            true
+        });
     }
 }
 
@@ -138,6 +141,7 @@ mod tests {
     fn test_handle_file_start() {
         let mut app = App::new();
         let flow = app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 0,
             path: "/test.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![1; 50],
@@ -151,12 +155,13 @@ mod tests {
     fn test_handle_file_progress_uses_hashmap() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 0,
             path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileProgress {
-            path: "/a.bin".into(),
+            id: 0,
             page_offset: 0,
             pages_walked: 100,
             resident: true,
@@ -168,13 +173,12 @@ mod tests {
     fn test_handle_file_done_sets_flag() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 0,
             path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
-        app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
-            path: "/a.bin".into(),
-        }));
+        app.handle_event(TuiEvent::Core(CoreEvent::FileDone { id: 0 }));
         assert!(app.files()[0].done);
     }
 
@@ -182,13 +186,13 @@ mod tests {
     fn test_completed_files_are_bounded() {
         let mut app = App::new();
         for total_pages in 0..10 {
-            let path: Arc<str> = format!("/{total_pages}.bin").into();
             app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-                path: path.clone(),
+                id: total_pages,
+                path: format!("/{total_pages}.bin").into(),
                 total_pages,
                 residency: bitvec::bitvec![0; total_pages],
             }));
-            app.handle_event(TuiEvent::Core(CoreEvent::FileDone { path }));
+            app.handle_event(TuiEvent::Core(CoreEvent::FileDone { id: total_pages }));
         }
 
         let files = app.visible_files(usize::MAX);
@@ -200,11 +204,13 @@ mod tests {
     fn test_files_in_insertion_order() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 0,
             path: "/first.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![1; 90],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 1,
             path: "/second.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![1; 10],
@@ -218,16 +224,19 @@ mod tests {
     fn test_visible_files_sorted_by_size_desc() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 0,
             path: "/small.bin".into(),
             total_pages: 10,
             residency: bitvec::bitvec![0; 10],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 1,
             path: "/big.bin".into(),
             total_pages: 1000,
             residency: bitvec::bitvec![0; 1000],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 2,
             path: "/mid.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
@@ -243,23 +252,24 @@ mod tests {
         let mut app = App::new();
         // Add 3 files, mark one done, max=2
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 0,
             path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 1,
             path: "/b.bin".into(),
             total_pages: 200,
             residency: bitvec::bitvec![0; 200],
         }));
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 2,
             path: "/c.bin".into(),
             total_pages: 50,
             residency: bitvec::bitvec![0; 50],
         }));
-        app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
-            path: "/b.bin".into(),
-        }));
+        app.handle_event(TuiEvent::Core(CoreEvent::FileDone { id: 1 }));
         let vis = app.visible_files(2);
         assert_eq!(vis.len(), 2);
         // /b.bin is done and should be hidden since 3 > 2
@@ -270,13 +280,12 @@ mod tests {
     fn test_visible_files_keeps_done_when_fits() {
         let mut app = App::new();
         app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+            id: 0,
             path: "/a.bin".into(),
             total_pages: 100,
             residency: bitvec::bitvec![0; 100],
         }));
-        app.handle_event(TuiEvent::Core(CoreEvent::FileDone {
-            path: "/a.bin".into(),
-        }));
+        app.handle_event(TuiEvent::Core(CoreEvent::FileDone { id: 0 }));
         // Only 1 file, max=8 → done file stays visible
         let vis = app.visible_files(8);
         assert_eq!(vis.len(), 1);
@@ -287,18 +296,44 @@ mod tests {
     fn test_visible_files_all_done_overflow_shows_largest() {
         let mut app = App::new();
         for i in 0..3 {
-            let path: Arc<str> = format!("/{i}.bin").into();
             app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
-                path: path.clone(),
+                id: i,
+                path: format!("/{i}.bin").into(),
                 total_pages: (i + 1) * 100,
                 residency: bitvec::bitvec![0; (i + 1) * 100],
             }));
-            app.handle_event(TuiEvent::Core(CoreEvent::FileDone { path }));
+            app.handle_event(TuiEvent::Core(CoreEvent::FileDone { id: i }));
         }
         let vis = app.visible_files(2);
         assert_eq!(vis.len(), 2);
         assert_eq!(&*vis[0].path, "/2.bin");
         assert_eq!(&*vis[1].path, "/1.bin");
+    }
+
+    #[test]
+    fn duplicate_paths_keep_independent_state() {
+        let mut app = App::new();
+        for id in 0..2 {
+            app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+                id,
+                path: "/same.bin".into(),
+                total_pages: 10,
+                residency: bitvec::bitvec![0; 10],
+            }));
+        }
+        app.handle_event(TuiEvent::Core(CoreEvent::FileProgress {
+            id: 0,
+            page_offset: 0,
+            pages_walked: 10,
+            resident: true,
+        }));
+        app.handle_event(TuiEvent::Core(CoreEvent::FileDone { id: 0 }));
+
+        let files = app.files();
+        assert_eq!(files[0].pages_in_core, 10);
+        assert!(files[0].done);
+        assert_eq!(files[1].pages_in_core, 0);
+        assert!(!files[1].done);
     }
 
     #[test]

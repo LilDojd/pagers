@@ -9,20 +9,21 @@ use crate::mincore::DefaultPageMap;
 pub enum Event<PM = DefaultPageMap> {
     /// A file has started processing. Includes initial residency snapshot.
     FileStart {
+        id: usize,
         path: Arc<str>,
         total_pages: usize,
         residency: PM,
     },
     /// Residency update during touch/lock polling.
     FileProgress {
-        path: Arc<str>,
+        id: usize,
         page_offset: usize,
         pages_walked: usize,
         resident: bool,
     },
     /// File processing complete.
     FileDone {
-        path: Arc<str>,
+        id: usize,
     },
     AllDone,
 }

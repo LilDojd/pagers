@@ -24,14 +24,18 @@ pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
 
 pub struct Tui<PM: PageMap = DefaultPageMap> {
     sink: Sender<Event<PM>>,
+    next_id: std::sync::atomic::AtomicUsize,
 }
 
 impl<PM: PageMap> Tui<PM> {
     pub fn new(sender: Sender<Event<PM>>) -> Self {
-        Self { sink: sender }
+        Self {
+            sink: sender,
+            next_id: std::sync::atomic::AtomicUsize::new(0),
+        }
     }
 
-    fn send_residency(&self, path: &std::sync::Arc<str>, page_offset: usize, residency: &PM) {
+    fn send_residency(&self, id: usize, page_offset: usize, residency: &PM) {
         let mut start = 0;
         while start < residency.len() {
             let resident = residency.is_set(start);
@@ -40,7 +44,7 @@ impl<PM: PageMap> Tui<PM> {
                 end += 1;
             }
             let _ = self.sink.send(Event::FileProgress {
-                path: path.clone(),
+                id,
                 page_offset: page_offset + start,
                 pages_walked: end - start,
                 resident,
@@ -59,6 +63,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         stats: &Stats,
         cancellation: &Cancellation,
     ) -> crate::Result<Option<O::Output>> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let path_str: std::sync::Arc<str> = path.display().to_string().into();
 
         let pf = match prepare_file(path, range)? {
@@ -75,6 +80,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             .initial_pages_in_core
             .fetch_add(pages_in_core, Ordering::Relaxed);
         let _ = self.sink.send(Event::FileStart {
+            id,
             path: path_str.clone(),
             total_pages,
             residency: residency.clone(),
@@ -87,7 +93,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             stats.action_pages.fetch_add(delta, Ordering::Relaxed);
             if let Some(resident) = O::EFFECT.progress_resident() {
                 let _ = self.sink.send(Event::FileProgress {
-                    path: path_str.clone(),
+                    id,
                     page_offset: 0,
                     pages_walked,
                     resident,
@@ -101,11 +107,11 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         let result = match processed {
             Ok(Some(result)) => result,
             Ok(None) => {
-                let _ = self.sink.send(Event::FileDone { path: path_str });
+                let _ = self.sink.send(Event::FileDone { id });
                 return Ok(None);
             }
             Err(error) => {
-                let _ = self.sink.send(Event::FileDone { path: path_str });
+                let _ = self.sink.send(Event::FileDone { id });
                 return Err(error);
             }
         };
@@ -121,10 +127,10 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         if O::EFFECT.has_action()
             && let Some(residency_after) = result.residency_after.as_ref()
         {
-            self.send_residency(&path_str, 0, residency_after);
+            self.send_residency(id, 0, residency_after);
         }
 
-        let _ = self.sink.send(Event::FileDone { path: path_str });
+        let _ = self.sink.send(Event::FileDone { id });
 
         Ok(Some(result.output))
     }
