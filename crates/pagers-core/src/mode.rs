@@ -3,11 +3,10 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 
 use crate::Cancellation;
-use crate::events::{Event, EventSink};
+use crate::events::Event;
 use crate::mincore::{DefaultPageMap, PageMap};
 use crate::ops::{
-    self, FileContext, FileProcessed, FileRange, Op, PreparedFile, ResidencyEffect, Stats,
-    prepare_file,
+    self, FileContext, FileRange, Op, PreparedFile, ResidencyEffect, Stats, prepare_file,
 };
 
 pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
@@ -24,14 +23,12 @@ pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
 }
 
 pub struct Tui<PM: PageMap = DefaultPageMap> {
-    sink: EventSink<PM>,
+    sink: Sender<Event<PM>>,
 }
 
 impl<PM: PageMap> Tui<PM> {
     pub fn new(sender: Sender<Event<PM>>) -> Self {
-        Self {
-            sink: EventSink::new(sender),
-        }
+        Self { sink: sender }
     }
 
     fn send_residency(&self, path: &std::sync::Arc<str>, page_offset: usize, residency: &PM) {
@@ -42,7 +39,7 @@ impl<PM: PageMap> Tui<PM> {
             while end < residency.len() && residency.is_set(end) == resident {
                 end += 1;
             }
-            self.sink.send(Event::FileProgress {
+            let _ = self.sink.send(Event::FileProgress {
                 path: path.clone(),
                 page_offset: page_offset + start,
                 pages_walked: end - start,
@@ -77,7 +74,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         stats
             .initial_pages_in_core
             .fetch_add(pages_in_core, Ordering::Relaxed);
-        self.sink.send(Event::FileStart {
+        let _ = self.sink.send(Event::FileStart {
             path: path_str.clone(),
             total_pages,
             residency: residency.clone(),
@@ -89,7 +86,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             let delta = action.saturating_sub(reported_action.swap(action, Ordering::Relaxed));
             stats.action_pages.fetch_add(delta, Ordering::Relaxed);
             if let Some(resident) = O::EFFECT.progress_resident() {
-                self.sink.send(Event::FileProgress {
+                let _ = self.sink.send(Event::FileProgress {
                     path: path_str.clone(),
                     page_offset: 0,
                     pages_walked,
@@ -99,34 +96,24 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         };
 
         let prepared = Some((pf, residency, pages_in_core));
-        let processed = full_process_file::<O, PM>(
-            op,
-            path,
-            range,
-            Some(&on_progress),
-            prepared,
-            cancellation,
-        );
+        let processed =
+            full_process_file::<O, PM>(op, path, range, Some(&on_progress), prepared, cancellation);
         let result = match processed {
             Ok(Some(result)) => result,
             Ok(None) => {
-                self.sink.send(Event::FileDone { path: path_str });
+                let _ = self.sink.send(Event::FileDone { path: path_str });
                 return Ok(None);
             }
             Err(error) => {
-                self.sink.send(Event::FileDone { path: path_str });
+                let _ = self.sink.send(Event::FileDone { path: path_str });
                 return Err(error);
             }
         };
 
         // Flush remaining action_pages not covered by the progress callback.
         let reported = reported_action.load(Ordering::Relaxed);
-        let total_action = O::EFFECT.action_pages(
-            result
-                .pages_in_core_before()
-                .unwrap_or(result.pages_in_core_after()),
-            result.pages_in_core_after(),
-        );
+        let total_action =
+            O::EFFECT.action_pages(result.pages_in_core_before, result.pages_in_core_after);
         stats
             .action_pages
             .fetch_add(total_action.saturating_sub(reported), Ordering::Relaxed);
@@ -137,23 +124,17 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             self.send_residency(&path_str, 0, residency_after);
         }
 
-        self.sink.send(Event::FileDone { path: path_str });
+        let _ = self.sink.send(Event::FileDone { path: path_str });
 
-        Ok(Some(result.into_output()))
+        Ok(Some(result.output))
     }
 
     fn finish(&self) {
-        self.sink.send(Event::AllDone);
+        let _ = self.sink.send(Event::AllDone);
     }
 }
 
 pub struct Cli;
-
-// Marker ZSTs for run-mode dispatch
-pub struct TuiMode;
-pub struct CliMode;
-pub struct Daemon;
-pub struct NoDaemon;
 
 impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
     fn process_one<O: Op>(
@@ -172,10 +153,10 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
         tracing::info!(
             "{}: {}/{} pages resident",
             path.display(),
-            result.pages_in_core_after(),
-            result.total_pages(),
+            result.pages_in_core_after,
+            result.total_pages,
         );
-        Ok(Some(result.into_output()))
+        Ok(Some(result.output))
     }
 }
 
@@ -278,17 +259,14 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
     }))
 }
 
-fn cli_record_stats<O: Op>(result: &impl FileProcessed<Output = O::Output>, stats: &Stats) {
-    let initial = result
-        .pages_in_core_before()
-        .unwrap_or(result.pages_in_core_after());
-    let action = O::EFFECT.action_pages(initial, result.pages_in_core_after());
+fn cli_record_stats<O: Op>(result: &ops::CountsResult<O::Output>, stats: &Stats) {
+    let action = O::EFFECT.action_pages(result.pages_in_core_before, result.pages_in_core_after);
     stats
         .total_pages
-        .fetch_add(result.total_pages(), Ordering::Relaxed);
+        .fetch_add(result.total_pages, Ordering::Relaxed);
     stats
         .initial_pages_in_core
-        .fetch_add(initial, Ordering::Relaxed);
+        .fetch_add(result.pages_in_core_before, Ordering::Relaxed);
     stats.action_pages.fetch_add(action, Ordering::Relaxed);
     stats.total_files.fetch_add(1, Ordering::Relaxed);
 }

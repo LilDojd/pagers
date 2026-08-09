@@ -189,13 +189,7 @@ fn collect_paths(
                 &mut emit,
             )?;
         } else if metadata.is_file() {
-            if explicit_file_allowed(
-                path,
-                &metadata,
-                crawl_config,
-                needs_meta,
-                seen_inodes,
-            ) {
+            if explicit_file_allowed(path, &metadata, crawl_config, needs_meta, seen_inodes) {
                 emit(path.clone())?;
             }
         } else {
@@ -354,14 +348,20 @@ fn walk_dir_entries(
                 continue;
             }
 
+            let metadata = match entry.metadata.as_ref() {
+                Ok(metadata) => Some(metadata),
+                Err(error) if needs_meta => {
+                    return Err(crate::Error::io(
+                        logical_path.display().to_string(),
+                        io::Error::new(error.kind(), error.to_string()),
+                    ));
+                }
+                Err(_) => None,
+            };
+
             if !entry.file_type.is_file()
                 || !path_allowed(&logical_path, false, config, root.overrides.as_deref())
-                || !file_allowed(
-                    entry.metadata.as_ref().ok(),
-                    config,
-                    needs_meta,
-                    seen_inodes,
-                )
+                || !file_allowed(metadata, config, needs_meta, seen_inodes)
             {
                 continue;
             }
@@ -493,10 +493,10 @@ pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Cancellation;
     use crate::mode::Cli;
     use crate::ops::{FileContext, Op, ResidencyEffect};
     use std::sync::atomic::AtomicUsize;
-    use crate::Cancellation;
 
     #[test]
     fn threads_parse_and_display() {
@@ -554,10 +554,7 @@ mod tests {
             const EFFECT: ResidencyEffect = ResidencyEffect::Preserve;
             type Output = ();
 
-            fn execute<PM: PageMap + Sync>(
-                &self,
-                _ctx: &FileContext<'_, PM>,
-            ) -> crate::Result<()> {
+            fn execute<PM: PageMap + Sync>(&self, _ctx: &FileContext<'_, PM>) -> crate::Result<()> {
                 let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
                 self.max_active.fetch_max(active, Ordering::SeqCst);
                 std::thread::sleep(std::time::Duration::from_millis(20));

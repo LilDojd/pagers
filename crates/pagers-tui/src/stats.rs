@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui_core::style::{Color, Style};
@@ -7,7 +5,7 @@ use ratatui_core::text::{Line, Span};
 use ratatui_core::widgets::Widget;
 
 use pagers_core::ops::Stats;
-use pagers_core::output::{pretty_elapsed, pretty_size};
+use pagers_core::output::{Summary, pretty_elapsed, pretty_size};
 
 pub(crate) const SUMMARY_LINES: u16 = 5;
 
@@ -22,18 +20,7 @@ pub(crate) struct SummaryWidget<'a> {
 
 impl Widget for SummaryWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let page_size = *pagers_core::pagesize::PAGE_SIZE;
-        let total_pages = self.stats.total_pages.load(Ordering::Relaxed);
-        let initial = self.stats.initial_pages_in_core.load(Ordering::Relaxed);
-        let action_pages = self.stats.action_pages.load(Ordering::Relaxed);
-        let total_files = self.stats.total_files.load(Ordering::Relaxed);
-        let total_dirs = self.stats.total_dirs.load(Ordering::Relaxed);
-
-        let total_size = total_pages * page_size;
-        let action_size = action_pages * page_size;
-        let signed_action = (action_pages as isize) * self.action_sign;
-        let resident_pages = initial.saturating_add_signed(signed_action);
-        let resident_size = resident_pages * page_size;
+        let summary = Summary::from_stats(self.stats, self.elapsed, self.action_sign);
 
         let label_style = Style::default().fg(Color::DarkGray);
 
@@ -44,20 +31,33 @@ impl Widget for SummaryWidget<'_> {
 
         let has_action = self.action_sign != 0;
         let mut rows: Vec<(String, Line)> = vec![
-            ("Files:".into(), Line::from(format!("{total_files}"))),
-            ("Directories:".into(), Line::from(format!("{total_dirs}"))),
+            ("Files:".into(), Line::from(summary.total_files.to_string())),
+            (
+                "Directories:".into(),
+                Line::from(summary.total_dirs.to_string()),
+            ),
         ];
 
         if has_action {
             rows.push((
                 format!("{cap} Pages:"),
-                pct_line(action_pages, total_pages, action_size, total_size),
+                pct_line(
+                    summary.action_pages,
+                    summary.total_pages,
+                    summary.action_size,
+                    summary.total_size,
+                ),
             ));
         }
 
         rows.push((
             "Resident Pages:".into(),
-            pct_line(resident_pages, total_pages, resident_size, total_size),
+            pct_line(
+                summary.total_resident_pages,
+                summary.total_pages,
+                summary.resident_size,
+                summary.total_size,
+            ),
         ));
 
         rows.push(("Elapsed:".into(), Line::from(pretty_elapsed(self.elapsed))));

@@ -179,7 +179,10 @@ fn test_foreground_lock_retains_locked_mapping() {
     let _ = child.kill();
     let _ = child.wait();
 
-    assert!(locked, "foreground lock process did not retain any locked memory");
+    assert!(
+        locked,
+        "foreground lock process did not retain any locked memory"
+    );
 }
 
 #[test]
@@ -230,6 +233,20 @@ fn test_query_single_file() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Files: 1"), "stdout: {stdout}");
     assert!(stdout.contains("Resident Pages:"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_query_defaults_to_human_output_when_piped() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    fs_err::write(file.path(), vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", file.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Files: 1"));
 }
 
 #[test]
@@ -787,13 +804,7 @@ fn test_batch_from_file() {
 #[test]
 fn test_missing_batch_file_fails() {
     let output = pagers_bin()
-        .args([
-            "query",
-            "-b",
-            "/nonexistent/pagers-batch-file",
-            "-o",
-            "kv",
-        ])
+        .args(["query", "-b", "/nonexistent/pagers-batch-file", "-o", "kv"])
         .output()
         .unwrap();
 

@@ -28,16 +28,6 @@ pub struct WithCommon<T: clap::Args> {
     pub inner: T,
 }
 
-impl<T: clap::Args> WithCommon<T> {
-    pub fn common(&self) -> &CommonArgs {
-        &self.common
-    }
-
-    pub fn output(&self) -> &OutputArgs {
-        &self.output
-    }
-}
-
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Show page cache residency
@@ -55,8 +45,8 @@ pub enum Command {
 impl Command {
     pub fn output(&self) -> &OutputArgs {
         match self {
-            Self::Query(a) | Self::Touch(a) | Self::Evict(a) => a.output(),
-            Self::Lock(a) | Self::Lockall(a) => a.output(),
+            Self::Query(a) | Self::Touch(a) | Self::Evict(a) => &a.output,
+            Self::Lock(a) | Self::Lockall(a) => &a.output,
         }
     }
 }
@@ -159,16 +149,6 @@ pub enum OutputFormatArg {
     Kv,
     /// JSON output
     Json,
-}
-
-impl std::fmt::Display for OutputFormatArg {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Human => write!(f, "human"),
-            Self::Kv => write!(f, "kv"),
-            Self::Json => write!(f, "json"),
-        }
-    }
 }
 
 fn styles() -> clap::builder::Styles {

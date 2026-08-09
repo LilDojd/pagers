@@ -1,3 +1,4 @@
+use std::io::IsTerminal as _;
 use std::process::ExitCode;
 
 use pagers_core::Cancellation;
@@ -13,11 +14,8 @@ pub mod size_range;
 mod tracing;
 use cli::*;
 use pagers_core::mincore::DefaultPageMap;
-use pagers_core::mode;
-use runop::{Cmd, Run};
+use runop::{run_cli_command, run_daemon_command, run_tui_command};
 use size_range::{SizeRange, parse_size};
-
-type C<'a, O> = Cmd<'a, O, DefaultPageMap>;
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum Error {
@@ -75,11 +73,17 @@ where
     O::Output: 'static,
 {
     let quiet = a.output.is_quiet();
-    let cmd = C::new(op, a.common(), cancellation, a.output.format, quiet, None);
-    if a.output.format.is_some() || quiet {
-        Run::<mode::NoDaemon, mode::CliMode>::run(cmd)
+    if a.output.format.is_some() || quiet || !std::io::stdout().is_terminal() {
+        run_cli_command::<_, DefaultPageMap>(
+            &op,
+            &a.common,
+            cancellation,
+            a.output.format,
+            quiet,
+            None,
+        )
     } else {
-        Run::<mode::NoDaemon, mode::TuiMode>::run(cmd)
+        run_tui_command::<_, DefaultPageMap>(&op, &a.common, cancellation, None)
     }
 }
 
@@ -92,18 +96,21 @@ where
     O::Output: 'static,
 {
     let quiet = a.output.is_quiet();
-    let use_cli = a.output.format.is_some() || quiet;
-    let cmd = C::new(
-        op,
-        a.common(),
-        cancellation,
-        a.output.format,
-        quiet,
-        Some(&a.inner),
-    );
+    let use_cli = a.output.format.is_some() || quiet || !std::io::stdout().is_terminal();
     match (a.inner.daemon, use_cli) {
-        (true, _) => Run::<mode::Daemon, mode::CliMode>::run(cmd),
-        (_, true) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),
-        (false, false) => Run::<mode::NoDaemon, mode::TuiMode>::run(cmd),
+        (true, _) => {
+            run_daemon_command::<_, DefaultPageMap>(&op, &a.common, cancellation, &a.inner)
+        }
+        (_, true) => run_cli_command::<_, DefaultPageMap>(
+            &op,
+            &a.common,
+            cancellation,
+            a.output.format,
+            quiet,
+            Some(&a.inner),
+        ),
+        (false, false) => {
+            run_tui_command::<_, DefaultPageMap>(&op, &a.common, cancellation, Some(&a.inner))
+        }
     }
 }

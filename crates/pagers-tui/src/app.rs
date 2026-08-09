@@ -7,7 +7,7 @@ use pagers_core::mincore::{DefaultPageMap, PageMap, PageMapSlice as _};
 use crate::event::TuiEvent;
 use crate::state::FileState;
 
-pub struct App<PM: PageMap = DefaultPageMap> {
+pub(crate) struct App<PM: PageMap = DefaultPageMap> {
     files: Vec<FileState<PM>>,
     file_index: HashMap<Arc<str>, usize>,
 }
@@ -25,7 +25,7 @@ impl<PM: PageMap> Default for App<PM> {
 }
 
 impl<PM: PageMap> App<PM> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             files: Vec::new(),
             file_index: HashMap::new(),
@@ -82,44 +82,29 @@ impl<PM: PageMap> App<PM> {
         }
     }
 
-    pub fn files(&self) -> Vec<&FileState<PM>> {
+    #[cfg(test)]
+    fn files(&self) -> Vec<&FileState<PM>> {
         self.files.iter().collect()
     }
 
     /// Return files for the live TUI viewport: sorted by size descending
     /// (path tiebreaker), with done files hidden when total exceeds `max`.
-    pub fn visible_files(&self, max: usize) -> Vec<&FileState<PM>> {
+    pub(crate) fn visible_files(&self, max: usize) -> Vec<&FileState<PM>> {
         let mut files: Vec<&FileState<PM>> = self.files.iter().collect();
         files.sort_by(|a, b| {
             b.total_pages
                 .cmp(&a.total_pages)
                 .then_with(|| a.path.cmp(&b.path))
         });
-        if files.len() > max {
+        if files.len() > max && files.iter().any(|file| !file.done) {
             files.retain(|f| !f.done);
-            if files.is_empty() {
-                files = self.files.iter().collect();
-                files.sort_by(|a, b| {
-                    b.total_pages
-                        .cmp(&a.total_pages)
-                        .then_with(|| a.path.cmp(&b.path))
-                });
-            }
         }
         files.truncate(max);
         files
     }
 
-    pub fn into_files(self) -> Vec<FileState<PM>> {
-        let mut files = self.files;
-        files.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
-        files
-    }
-
     fn trim_completed(&mut self) {
-        if self.files.iter().filter(|file| file.done).count()
-            <= crate::MAX_DISPLAY_FILES as usize
-        {
+        if self.files.iter().filter(|file| file.done).count() <= crate::MAX_DISPLAY_FILES as usize {
             return;
         }
         let remove = self

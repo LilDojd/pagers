@@ -8,17 +8,6 @@ use super::{FileInfo, FileRange};
 use crate::Error;
 use crate::mincore::PageMap;
 
-pub trait FileProcessed {
-    type Output;
-    fn into_output(self) -> Self::Output;
-    fn output_ref(&self) -> &Self::Output;
-    fn total_pages(&self) -> usize;
-    fn pages_in_core_before(&self) -> Option<usize> {
-        None
-    }
-    fn pages_in_core_after(&self) -> usize;
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct FullResult<O, PM> {
     pub output: O,
@@ -29,50 +18,12 @@ pub struct FullResult<O, PM> {
     pub residency_after: Option<PM>,
 }
 
-impl<O, PM> FileProcessed for FullResult<O, PM> {
-    type Output = O;
-    fn into_output(self) -> O {
-        self.output
-    }
-    fn output_ref(&self) -> &O {
-        &self.output
-    }
-    fn total_pages(&self) -> usize {
-        self.total_pages
-    }
-    fn pages_in_core_before(&self) -> Option<usize> {
-        Some(self.pages_in_core_before)
-    }
-    fn pages_in_core_after(&self) -> usize {
-        self.pages_in_core_after
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct CountsResult<O> {
     pub output: O,
     pub total_pages: usize,
     pub pages_in_core_before: usize,
     pub pages_in_core_after: usize,
-}
-
-impl<O> FileProcessed for CountsResult<O> {
-    type Output = O;
-    fn into_output(self) -> O {
-        self.output
-    }
-    fn output_ref(&self) -> &O {
-        &self.output
-    }
-    fn total_pages(&self) -> usize {
-        self.total_pages
-    }
-    fn pages_in_core_before(&self) -> Option<usize> {
-        Some(self.pages_in_core_before)
-    }
-    fn pages_in_core_after(&self) -> usize {
-        self.pages_in_core_after
-    }
 }
 
 pub(crate) struct PreparedFile {

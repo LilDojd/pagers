@@ -18,7 +18,7 @@ use crate::mincore::{DefaultPageMap, PageMap};
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
 pub use lockall::Lockall;
-pub use process::{CountsResult, FileProcessed, FullResult, file_info};
+pub use process::{CountsResult, FullResult, file_info};
 pub(crate) use process::{PreparedFile, prepare_file};
 pub use query::Query;
 pub use touch::Touch;
@@ -190,10 +190,6 @@ impl FileRange {
         self.max_len
     }
 
-    pub fn is_full_file(&self) -> bool {
-        self.offset == 0 && self.max_len.is_none()
-    }
-
     pub(crate) fn validate(&self) -> crate::Result<()> {
         let page_size = *crate::pagesize::PAGE_SIZE as u64;
         if !self.offset.is_multiple_of(page_size) {
@@ -224,7 +220,7 @@ pub struct FileInfo<PM = DefaultPageMap> {
     pub residency: PM,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Stats {
     pub total_pages: AtomicUsize,
     pub initial_pages_in_core: AtomicUsize,
@@ -233,21 +229,9 @@ pub struct Stats {
     pub total_dirs: AtomicUsize,
 }
 
-impl Default for Stats {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Stats {
     pub fn new() -> Self {
-        Self {
-            total_pages: AtomicUsize::new(0),
-            initial_pages_in_core: AtomicUsize::new(0),
-            action_pages: AtomicUsize::new(0),
-            total_files: AtomicUsize::new(0),
-            total_dirs: AtomicUsize::new(0),
-        }
+        Self::default()
     }
 }
 

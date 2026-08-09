@@ -38,10 +38,6 @@ need_stdout = false
 command = ["cargo", "clippy", "--all-targets", "--color", "always"]
 need_stdout = false
 
-# This job lets you run
-# - all tests: bacon test
-# - a specific test: bacon test -- config::test_default_files
-# - the tests of a package: bacon test -- -- -p config
 [jobs.test]
 command = [
   "cargo",
@@ -78,32 +74,16 @@ command = [
   "run",
   "--color",
   "always",
-  # put launch parameters for your program behind a `--` separator
+  "--",
+  "query",
+  "-o",
+  "kv",
+  "README.md",
 ]
 need_stdout = true
 allow_warnings = true
 background = true
 
-[jobs.health-failing]
-command = [
-  "cargo",
-  "run",
-  "--color",
-  "always",
-  "--",
-  "health",
-  "./crates/omnix-health/failing",
-]
-need_stdout = true
-allow_warnings = true
-
-[jobs.develop]
-command = ["cargo", "run", "--color", "always", "--", "develop", "."]
-need_stdout = true
-allow_warnings = true
-
-
 [keybindings]
 # alt-m = "job:my-job"
-c = "job:clippy-all"     # comment this to have 'c' run clippy on only the default target
-h = "job:health-failing"
+c = "job:clippy-all" # comment this to have 'c' run clippy on only the default target

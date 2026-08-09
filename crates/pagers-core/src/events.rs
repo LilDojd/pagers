@@ -1,8 +1,6 @@
 //! Events emitted during file processing for UI consumption.
 
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::mpsc::Sender;
 
 use crate::mincore::DefaultPageMap;
 
@@ -27,17 +25,4 @@ pub enum Event<PM = DefaultPageMap> {
         path: Arc<str>,
     },
     AllDone,
-}
-
-/// `Sync` wrapper around `Sender<Event>` for use with rayon.
-pub struct EventSink<PM>(Mutex<Sender<Event<PM>>>);
-
-impl<PM> EventSink<PM> {
-    pub fn new(sender: Sender<Event<PM>>) -> Self {
-        Self(Mutex::new(sender))
-    }
-
-    pub fn send(&self, event: Event<PM>) {
-        let _ = self.0.lock().unwrap().send(event);
-    }
 }

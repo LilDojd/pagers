@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use pagers_core::Cancellation;
-use pagers_core::mincore::{DefaultPageMap, PageMap};
+use pagers_core::mincore::PageMap;
 use pagers_core::mode;
 use pagers_core::output::Summary;
 use pagers_core::{crawl, ops};
@@ -11,102 +11,72 @@ use crate::Error;
 use crate::cli::{CommonArgs, LockInner, OutputFormatArg};
 use crate::daemon;
 
-pub(crate) trait Run<D, M> {
-    fn run(self) -> Result<(), Error>;
-}
-
-pub(crate) struct Cmd<'a, O, PM: PageMap = DefaultPageMap> {
-    pub op: O,
-    pub common: &'a CommonArgs,
-    pub cancellation: &'a Cancellation,
-    pub format: Option<OutputFormatArg>,
-    pub quiet: bool,
-    pub lock: Option<&'a LockInner>,
-    _phantom: std::marker::PhantomData<PM>,
-}
-
-impl<'a, O, PM: PageMap> Cmd<'a, O, PM> {
-    pub fn new(
-        op: O,
-        common: &'a CommonArgs,
-        cancellation: &'a Cancellation,
-        format: Option<OutputFormatArg>,
-        quiet: bool,
-        lock: Option<&'a LockInner>,
-    ) -> Self {
-        Self {
-            op,
-            common,
-            cancellation,
-            format,
-            quiet,
-            lock,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
-    Run<mode::NoDaemon, mode::TuiMode> for Cmd<'_, O, PM>
+pub(crate) fn run_tui_command<
+    O: ops::Op + Send + 'static,
+    PM: PageMap + Clone + Send + Sync + 'static,
+>(
+    op: &O,
+    common: &CommonArgs,
+    cancellation: &Cancellation,
+    lock: Option<&LockInner>,
+) -> Result<(), Error>
 where
     O::Output: 'static,
 {
-    fn run(self) -> Result<(), Error> {
-        install_signal_handler(self.cancellation)?;
-        let (stats, _outputs, _) = run_tui::<O, PM>(&self.op, self.common, self.cancellation)?;
-        if let Some(lock) = self.lock {
-            daemon::hold(&stats, lock, self.cancellation, None);
-        }
-        Ok(())
+    install_signal_handler(cancellation)?;
+    let (stats, _outputs, _) = run_tui::<O, PM>(op, common, cancellation)?;
+    if let Some(lock) = lock {
+        daemon::hold(&stats, lock, cancellation, None);
     }
+    Ok(())
 }
 
-impl<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>
-    Run<mode::NoDaemon, mode::CliMode> for Cmd<'_, O, PM>
+pub(crate) fn run_cli_command<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
+    op: &O,
+    common: &CommonArgs,
+    cancellation: &Cancellation,
+    format: Option<OutputFormatArg>,
+    quiet: bool,
+    lock: Option<&LockInner>,
+) -> Result<(), Error>
 where
     O::Output: 'static,
 {
-    fn run(self) -> Result<(), Error> {
-        install_signal_handler(self.cancellation)?;
-        let (stats, _outputs, elapsed) =
-            run_cli::<O, PM>(&self.op, self.common, self.cancellation)?;
-        if !self.quiet {
-            print_summary::<O>(&stats, elapsed, self.format.unwrap_or_default());
-        }
-        if let Some(lock) = self.lock {
-            daemon::hold(&stats, lock, self.cancellation, None);
-        }
-        Ok(())
+    install_signal_handler(cancellation)?;
+    let (stats, _outputs, elapsed) = run_cli::<O, PM>(op, common, cancellation)?;
+    if !quiet {
+        print_summary::<O>(&stats, elapsed, format.unwrap_or_default());
     }
+    if let Some(lock) = lock {
+        daemon::hold(&stats, lock, cancellation, None);
+    }
+    Ok(())
 }
 
-impl<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>
-    Run<mode::Daemon, mode::CliMode> for Cmd<'_, O, PM>
+pub(crate) fn run_daemon_command<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
+    op: &O,
+    common: &CommonArgs,
+    cancellation: &Cancellation,
+    lock: &LockInner,
+) -> Result<(), Error>
 where
     O::Output: 'static,
 {
-    fn run(self) -> Result<(), Error> {
-        let lock = self.lock.expect("daemon requires LockInner");
-        let setup = common_setup(self.common)?;
-        match daemon::go_daemon(lock.wait)? {
-            daemon::ForkOutcome::Parent => Ok(()),
-            daemon::ForkOutcome::Child(notify_fd) => {
-                install_signal_handler(self.cancellation)?;
-                let (stats, _locks, _) = match run_cli_with_setup::<O, PM>(
-                    &self.op,
-                    setup,
-                    self.cancellation,
-                ) {
-                    Ok(result) => result,
-                    Err(error) => {
-                        tracing::error!("{error}");
-                        daemon::notify_and_redirect(notify_fd, 1);
-                        return Err(error);
-                    }
-                };
-                daemon::hold(&stats, lock, self.cancellation, notify_fd);
-                Ok(())
-            }
+    let setup = common_setup(common)?;
+    match daemon::go_daemon(lock.wait)? {
+        daemon::ForkOutcome::Parent => Ok(()),
+        daemon::ForkOutcome::Child(notify_fd) => {
+            install_signal_handler(cancellation)?;
+            let (stats, _locks, _) = match run_cli_with_setup::<O, PM>(op, setup, cancellation) {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::error!("{error}");
+                    daemon::notify_and_redirect(notify_fd, 1);
+                    return Err(error);
+                }
+            };
+            daemon::hold(&stats, lock, cancellation, notify_fd);
+            Ok(())
         }
     }
 }
@@ -197,14 +167,19 @@ where
     let tui_label = O::LABEL.to_string();
     let action_sign = O::EFFECT.action_sign();
     let tui_handle = std::thread::spawn(move || {
-        pagers_tui::run(
+        let cancel_on_error = tui_cancellation.clone();
+        let result = pagers_tui::run(
             rx,
             tui_cancellation,
             stats_clone,
             &tui_label,
             action_sign,
             start,
-        )
+        );
+        if result.is_err() {
+            cancel_on_error.cancel();
+        }
+        result
     });
 
     let outputs = crawl::crawl_and_process::<O, PM, _>(

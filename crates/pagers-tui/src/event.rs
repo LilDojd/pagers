@@ -27,7 +27,6 @@ pub(crate) fn spawn_event_threads<PM: Send + 'static>(
     });
 
     let key_cancellation = cancellation;
-    let key_tx = tui_tx.clone();
     thread::spawn(move || {
         while !key_cancellation.is_cancelled() {
             if crossterm::event::poll(Duration::from_millis(100)).unwrap_or(false)
@@ -40,7 +39,6 @@ pub(crate) fn spawn_event_threads<PM: Send + 'static>(
                             .contains(crossterm::event::KeyModifiers::CONTROL));
                 if is_quit {
                     key_cancellation.cancel();
-                    let _ = key_tx.send(TuiEvent::Quit);
                     return;
                 }
             }

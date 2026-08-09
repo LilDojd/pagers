@@ -184,62 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn test_render_files_sorted_by_ratio() {
-        let high = FileState {
-            path: "/high.bin".into(),
-            total_pages: 100,
-            pages_in_core: 90,
-            residency: bitvec::bitvec![1; 100],
-            done: false,
-        };
-        let low = FileState {
-            path: "/low.bin".into(),
-            total_pages: 100,
-            pages_in_core: 10,
-            residency: bitvec::bitvec![0; 100],
-            done: false,
-        };
-        let mut files: Vec<&FileState> = vec![&high, &low];
-        files.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
-        let backend = TestBackend::new(80, 4);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                FileListWidget {
-                    files: &files,
-                    max_rows: 4,
-                }
-                .render(frame.area(), frame.buffer_mut())
-            })
-            .unwrap();
-        let buf = terminal.backend().buffer().clone();
-        let row0: String = (0..buf.area.width)
-            .map(|x| buf[(x, 0)].symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(row0.contains("low.bin"));
-    }
-
-    #[test]
-    fn test_file_state_ratio() {
-        let f = FileState {
-            path: "test".into(),
-            total_pages: 200,
-            pages_in_core: 100,
-            residency: bitvec::bitvec![1; 200],
-            done: false,
-        };
-        assert!((f.ratio() - 0.5).abs() < f64::EPSILON);
-        let empty = FileState {
-            path: "empty".into(),
-            total_pages: 0,
-            pages_in_core: 0,
-            residency: bitvec::bitvec![],
-            done: false,
-        };
-        assert!((empty.ratio() - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
     fn test_done_file_shows_checkmark() {
         let file = FileState {
             path: "/tmp/done.bin".into(),

@@ -4,9 +4,6 @@ mod state;
 mod stats;
 mod ui;
 
-pub use app::App;
-pub use state::FileState;
-
 use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -21,6 +18,9 @@ use ratatui_core::layout::Rect;
 use ratatui_core::terminal::{Terminal, TerminalOptions, Viewport};
 use ratatui_core::widgets::Widget;
 use ratatui_crossterm::{CrosstermBackend, crossterm};
+
+use app::App;
+use state::FileState;
 
 const MAX_DISPLAY_FILES: u16 = 8;
 const MAX_DISPLAY_PAGES: usize = 32;
