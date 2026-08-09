@@ -84,6 +84,7 @@ fn parse_with_multiply(src: &[u8], multiply: u64) -> Result<u64, RangeError> {
     let mut mantissa = 0_u64;
     let mut fractional_exponent = 0;
     let mut exponent = 0_i32;
+    let mut exponent_has_digit = false;
     let mut state = S::Empty;
 
     for &b in src {
@@ -97,7 +98,7 @@ fn parse_with_multiply(src: &[u8], multiply: u64) -> Result<u64, RangeError> {
                     state = S::Integer;
                 } else {
                     if b >= b'5' {
-                        mantissa += 1;
+                        mantissa = mantissa.checked_add(1).ok_or(RangeError::PosOverflow)?;
                     }
                     state = S::IntegerOverflow;
                     fractional_exponent += 1;
@@ -115,7 +116,7 @@ fn parse_with_multiply(src: &[u8], multiply: u64) -> Result<u64, RangeError> {
                     fractional_exponent -= 1;
                 } else {
                     if b >= b'5' {
-                        mantissa += 1;
+                        mantissa = mantissa.checked_add(1).ok_or(RangeError::PosOverflow)?;
                     }
                     state = S::FractionOverflow;
                 }
@@ -126,6 +127,7 @@ fn parse_with_multiply(src: &[u8], multiply: u64) -> Result<u64, RangeError> {
                     .and_then(|v| v.checked_add((b - b'0').into()))
                 {
                     exponent = e;
+                    exponent_has_digit = true;
                 } else {
                     return Err(RangeError::PosOverflow);
                 }
@@ -136,6 +138,7 @@ fn parse_with_multiply(src: &[u8], multiply: u64) -> Result<u64, RangeError> {
                     .and_then(|v| v.checked_sub((b - b'0').into()))
                 {
                     exponent = e;
+                    exponent_has_digit = true;
                 }
             }
             (_, b' ') => return Err(RangeError::SpaceNotAllowed),
@@ -152,6 +155,9 @@ fn parse_with_multiply(src: &[u8], multiply: u64) -> Result<u64, RangeError> {
 
     if state == S::Empty {
         return Err(RangeError::Empty);
+    }
+    if matches!(state, S::PosExponent | S::NegExponent) && !exponent_has_digit {
+        return Err(RangeError::InvalidDigit);
     }
 
     let exponent = exponent.saturating_add(fractional_exponent);
@@ -186,6 +192,9 @@ impl FromStr for SizeRange {
         let s = s.trim();
 
         if let Some((left, right)) = try_split(s) {
+            if left.is_empty() && right.is_empty() {
+                return Err(RangeError::Empty);
+            }
             let start_b = if left.is_empty() {
                 0
             } else {
@@ -327,6 +336,12 @@ mod tests {
         assert_eq!(parse_size(".5k"), Err(RangeError::InvalidDigit));
         assert_eq!(parse_size("k"), Err(RangeError::Empty));
         assert_eq!(parse_size("-1"), Err(RangeError::InvalidDigit));
+        assert_eq!(parse_size("1e+"), Err(RangeError::InvalidDigit));
+        assert_eq!(parse_size("1e-"), Err(RangeError::InvalidDigit));
+        assert_eq!(
+            parse_size("184467440737095516155"),
+            Err(RangeError::PosOverflow)
+        );
     }
 
     #[test]
@@ -412,6 +427,7 @@ mod tests {
     #[test]
     fn test_size_range_invalid_order() {
         assert!(SizeRange::from_str("20G-10K").is_err());
+        assert_eq!(SizeRange::from_str(".."), Err(RangeError::Empty));
     }
 
     #[test]
