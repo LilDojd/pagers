@@ -31,23 +31,19 @@ impl Op for Touch {
 
         if (0..total_pages).any(|i| needs_touch(&i)) {
             const PROGRESS_INTERVAL: usize = 256;
+            initiate_readahead(ctx);
 
-            std::thread::scope(|s| -> crate::Result<()> {
-                s.spawn(|| initiate_readahead(ctx));
-
-                for page_idx in (0..total_pages).filter(needs_touch) {
-                    ctx.check_cancelled()?;
-                    let offset = page_idx * page_size;
-                    unsafe {
-                        std::ptr::read_volatile(mmap.as_ptr().add(offset));
-                    }
-                    touched += 1;
-                    if (page_idx + 1) % PROGRESS_INTERVAL == 0 {
-                        ctx.report_progress(page_idx + 1, touched);
-                    }
+            for page_idx in (0..total_pages).filter(needs_touch) {
+                ctx.check_cancelled()?;
+                let offset = page_idx * page_size;
+                unsafe {
+                    std::ptr::read_volatile(mmap.as_ptr().add(offset));
                 }
-                Ok(())
-            })?;
+                touched += 1;
+                if (page_idx + 1) % PROGRESS_INTERVAL == 0 {
+                    ctx.report_progress(page_idx + 1, touched);
+                }
+            }
         }
 
         Ok(touched)
