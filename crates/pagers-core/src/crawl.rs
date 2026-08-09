@@ -168,7 +168,9 @@ fn collect_paths(
         all_paths.extend(batch_paths);
     }
 
-    let needs_meta = crawl_config.max_file_size.is_some() || !crawl_config.count_hardlinks;
+    let needs_meta = crawl_config.max_file_size.is_some()
+        || !crawl_config.count_hardlinks
+        || crawl_config.single_filesystem;
 
     for path in &all_paths {
         if cancellation.is_cancelled() {
@@ -267,7 +269,7 @@ fn walk_dir_entries(
 
     while let Some(root) = pending.pop_front() {
         if cancellation.is_cancelled() {
-            break;
+            return Err(crate::Error::Cancelled);
         }
 
         let root = Arc::new(root);
@@ -300,72 +302,89 @@ fn walk_dir_entries(
             },
         );
 
-        for entry in entries {
-            if cancellation.is_cancelled() {
-                break;
-            }
-            let entry = entry
-                .map_err(|error| crate::Error::io(root.logical.display().to_string(), error))?;
-            if entry.depth == 0 && entry.file_type.is_dir() {
+        let mut walk_error = None;
+        for entry_result in entries {
+            if walk_error.is_some() {
                 continue;
             }
+            if cancellation.is_cancelled() {
+                walk_error = Some(crate::Error::Cancelled);
+                continue;
+            }
+            let result = (|| -> crate::Result<()> {
+                let entry = entry_result.map_err(|error| {
+                    crate::Error::io(root.logical.display().to_string(), error)
+                })?;
+                if entry.depth == 0 && entry.file_type.is_dir() {
+                    return Ok(());
+                }
 
-            let physical_path = entry.path();
-            let logical_path = root.logical_path(&physical_path);
-            if entry.file_type.is_symlink() {
-                if !config.follow_symlinks {
-                    continue;
-                }
-                let metadata = fs_err::metadata(&physical_path)
-                    .map_err(|error| crate::Error::io(logical_path.display().to_string(), error))?;
-                if root.device.is_some_and(|device| metadata.dev() != device) {
-                    continue;
-                }
-                if metadata.is_dir() {
-                    stats.total_dirs.fetch_add(1, Ordering::Relaxed);
-                    let target = fs_err::canonicalize(&physical_path).map_err(|error| {
+                let physical_path = entry.path();
+                let logical_path = root.logical_path(&physical_path);
+                if entry.file_type.is_symlink() {
+                    if !config.follow_symlinks {
+                        return Ok(());
+                    }
+                    let metadata = fs_err::metadata(&physical_path).map_err(|error| {
                         crate::Error::io(logical_path.display().to_string(), error)
                     })?;
-                    if visited.insert(target.clone()) {
-                        pending.push_back(TraversalRoot::new(
-                            target,
-                            logical_path,
-                            root.device,
-                            config,
-                        )?);
+                    if root.device.is_some_and(|device| metadata.dev() != device) {
+                        return Ok(());
                     }
-                } else if metadata.is_file()
-                    && path_allowed(&logical_path, false, config, root.overrides.as_deref())
-                    && file_allowed(Some(&metadata), config, needs_meta, seen_inodes)
+                    if metadata.is_dir() {
+                        stats.total_dirs.fetch_add(1, Ordering::Relaxed);
+                        let target = fs_err::canonicalize(&physical_path).map_err(|error| {
+                            crate::Error::io(logical_path.display().to_string(), error)
+                        })?;
+                        if visited.insert(target.clone()) {
+                            pending.push_back(TraversalRoot::new(
+                                target,
+                                logical_path,
+                                root.device,
+                                config,
+                            )?);
+                        }
+                    } else if metadata.is_file()
+                        && path_allowed(&logical_path, false, config, root.overrides.as_deref())
+                        && file_allowed(Some(&metadata), config, needs_meta, seen_inodes)
+                    {
+                        emit(logical_path)?;
+                    }
+                    return Ok(());
+                }
+
+                let metadata = match entry.metadata.as_ref() {
+                    Ok(metadata) => Some(metadata),
+                    Err(error) if needs_meta => {
+                        return Err(crate::Error::io(
+                            logical_path.display().to_string(),
+                            io::Error::new(error.kind(), error.to_string()),
+                        ));
+                    }
+                    Err(_) => None,
+                };
+
+                if entry.file_type.is_dir() {
+                    stats.total_dirs.fetch_add(1, Ordering::Relaxed);
+                    return Ok(());
+                }
+
+                if !entry.file_type.is_file()
+                    || !path_allowed(&logical_path, false, config, root.overrides.as_deref())
+                    || !file_allowed(metadata, config, needs_meta, seen_inodes)
                 {
-                    emit(logical_path)?;
+                    return Ok(());
                 }
-                continue;
-            }
 
-            if entry.file_type.is_dir() {
-                stats.total_dirs.fetch_add(1, Ordering::Relaxed);
-                continue;
+                emit(logical_path)?;
+                Ok(())
+            })();
+            if let Err(error) = result {
+                walk_error = Some(error);
             }
-
-            let metadata = match entry.metadata.as_ref() {
-                Ok(metadata) => Some(metadata),
-                Err(error) if needs_meta => {
-                    return Err(crate::Error::io(
-                        logical_path.display().to_string(),
-                        io::Error::new(error.kind(), error.to_string()),
-                    ));
-                }
-                Err(_) => None,
-            };
-
-            if !entry.file_type.is_file()
-                || !path_allowed(&logical_path, false, config, root.overrides.as_deref())
-                || !file_allowed(metadata, config, needs_meta, seen_inodes)
-            {
-                continue;
-            }
-            emit(logical_path)?;
+        }
+        if let Some(error) = walk_error {
+            return Err(error);
         }
     }
     Ok(())
@@ -595,5 +614,48 @@ mod tests {
         .unwrap();
 
         assert_eq!(op.max_active.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn cancellation_drains_wide_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..10_000 {
+            fs_err::write(dir.path().join(index.to_string()), []).unwrap();
+        }
+        let config = CrawlConfig {
+            follow_symlinks: false,
+            single_filesystem: false,
+            count_hardlinks: true,
+            ignore_patterns: Vec::new(),
+            filter_patterns: Vec::new(),
+            max_file_size: None,
+            batch: None,
+            nul_delim: false,
+            threads: Threads::Exact(NonZeroU16::new(4).unwrap()),
+        };
+        let cancellation = Cancellation::new();
+        let worker_cancellation = cancellation.clone();
+        let root = dir.path().to_owned();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut seen = HashSet::new();
+            let result = walk_dir_entries(
+                &root,
+                &config,
+                false,
+                &mut seen,
+                &Stats::new(),
+                &worker_cancellation,
+                |_| Ok(()),
+            );
+            let _ = sender.send(result);
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        cancellation.cancel();
+        let result = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("cancelled traversal deadlocked");
+        assert!(matches!(result, Err(crate::Error::Cancelled)));
     }
 }
