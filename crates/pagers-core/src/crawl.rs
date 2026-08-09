@@ -80,20 +80,25 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     validate_patterns(crawl_config)?;
     let mut seen_inodes = HashSet::new();
     let mut outputs = Vec::new();
-    collect_paths(
+    let result = collect_paths(
         paths,
         crawl_config,
         &mut seen_inodes,
         stats,
         cancellation,
         |path| {
-            if let Some(output) = display.process_one::<O>(op, &path, range, stats, cancellation) {
+            if let Some(output) =
+                display.process_one::<O>(op, &path, range, stats, cancellation)?
+            {
                 outputs.push(output);
             }
+            Ok(())
         },
     );
 
     display.finish();
+    result?;
+    cancellation.check()?;
     op.finish()?;
     tracing::info!(
         "done: {} files, {} pages",
@@ -113,18 +118,15 @@ fn collect_paths(
     seen_inodes: &mut HashSet<(u64, u64)>,
     stats: &Stats,
     cancellation: &Cancellation,
-    mut emit: impl FnMut(PathBuf),
-) {
-    if cancellation.is_cancelled() {
-        return;
-    }
+    mut emit: impl FnMut(PathBuf) -> crate::Result<()>,
+) -> crate::Result<()> {
+    cancellation.check()?;
     let mut all_paths: Vec<PathBuf> = paths.to_vec();
 
     if let Some(batch_path) = &crawl_config.batch {
-        match read_batch_paths(batch_path, crawl_config.nul_delim) {
-            Ok(batch_paths) => all_paths.extend(batch_paths),
-            Err(e) => tracing::warn!("batch file: {e}"),
-        }
+        let batch_paths = read_batch_paths(batch_path, crawl_config.nul_delim)
+            .map_err(|error| crate::Error::io(batch_path.display().to_string(), error))?;
+        all_paths.extend(batch_paths);
     }
 
     let needs_meta = crawl_config.max_file_size.is_some() || !crawl_config.count_hardlinks;
@@ -133,7 +135,9 @@ fn collect_paths(
         if cancellation.is_cancelled() {
             break;
         }
-        if path.is_dir() {
+        let metadata = fs_err::metadata(path)
+            .map_err(|error| crate::Error::io(path.display().to_string(), error))?;
+        if metadata.is_dir() {
             tracing::info!("crawling directory {}", path.display());
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
             walk_dir_entries(
@@ -143,15 +147,25 @@ fn collect_paths(
                 seen_inodes,
                 cancellation,
                 &mut emit,
-            );
-        } else if path.is_file() {
-            if explicit_file_allowed(path, crawl_config, needs_meta, seen_inodes) {
-                emit(path.clone());
+            )?;
+        } else if metadata.is_file() {
+            if explicit_file_allowed(
+                path,
+                &metadata,
+                crawl_config,
+                needs_meta,
+                seen_inodes,
+            ) {
+                emit(path.clone())?;
             }
         } else {
-            tracing::warn!("skipping {}: not a file or directory", path.display());
+            return Err(crate::Error::io(
+                path.display().to_string(),
+                io::Error::new(io::ErrorKind::InvalidInput, "not a file or directory"),
+            ));
         }
     }
+    Ok(())
 }
 
 struct TraversalRoot {
@@ -163,18 +177,19 @@ struct TraversalRoot {
 }
 
 impl TraversalRoot {
-    fn new(physical: PathBuf, logical: PathBuf, device: Option<u64>, config: &CrawlConfig) -> Self {
-        Self {
+    fn new(
+        physical: PathBuf,
+        logical: PathBuf,
+        device: Option<u64>,
+        config: &CrawlConfig,
+    ) -> crate::Result<Self> {
+        Ok(Self {
             physical,
-            overrides: build_overrides(&logical, config)
-                .expect("path patterns were validated before traversal")
-                .map(Arc::new),
-            ignored: build_ignore_overrides(&logical, config)
-                .expect("path patterns were validated before traversal")
-                .map(Arc::new),
+            overrides: build_overrides(&logical, config)?.map(Arc::new),
+            ignored: build_ignore_overrides(&logical, config)?.map(Arc::new),
             logical,
             device,
-        }
+        })
     }
 
     fn logical_path(&self, physical: &Path) -> PathBuf {
@@ -191,26 +206,16 @@ fn walk_dir_entries(
     needs_meta: bool,
     seen_inodes: &mut HashSet<(u64, u64)>,
     cancellation: &Cancellation,
-    mut emit: impl FnMut(PathBuf),
-) {
+    mut emit: impl FnMut(PathBuf) -> crate::Result<()>,
+) -> crate::Result<()> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let root_metadata = match fs_err::metadata(root) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            tracing::warn!("{}: {error}", root.display());
-            return;
-        }
-    };
+    let root_metadata = fs_err::metadata(root)
+        .map_err(|error| crate::Error::io(root.display().to_string(), error))?;
     let root_device = config.single_filesystem.then(|| root_metadata.dev());
     let physical_root = if config.follow_symlinks && root.is_symlink() {
-        match fs_err::canonicalize(root) {
-            Ok(path) => path,
-            Err(error) => {
-                tracing::warn!("{}: {error}", root.display());
-                return;
-            }
-        }
+        fs_err::canonicalize(root)
+            .map_err(|error| crate::Error::io(root.display().to_string(), error))?
     } else {
         root.to_owned()
     };
@@ -219,7 +224,7 @@ fn walk_dir_entries(
         root.to_owned(),
         root_device,
         config,
-    )]);
+    )?]);
     let mut visited = HashSet::new();
     if config.follow_symlinks {
         visited.insert(fs_err::canonicalize(&physical_root).unwrap_or(physical_root));
@@ -264,13 +269,8 @@ fn walk_dir_entries(
             if cancellation.is_cancelled() {
                 break;
             }
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    tracing::warn!("{error}");
-                    continue;
-                }
-            };
+            let entry = entry
+                .map_err(|error| crate::Error::io(root.logical.display().to_string(), error))?;
             if entry.depth == 0 && entry.file_type.is_dir() {
                 continue;
             }
@@ -281,29 +281,28 @@ fn walk_dir_entries(
                 if !config.follow_symlinks {
                     continue;
                 }
-                let metadata = match fs_err::metadata(&physical_path) {
-                    Ok(metadata) => metadata,
-                    Err(error) => {
-                        tracing::warn!("{}: {error}", logical_path.display());
-                        continue;
-                    }
-                };
+                let metadata = fs_err::metadata(&physical_path)
+                    .map_err(|error| crate::Error::io(logical_path.display().to_string(), error))?;
                 if root.device.is_some_and(|device| metadata.dev() != device) {
                     continue;
                 }
                 if metadata.is_dir() {
-                    match fs_err::canonicalize(&physical_path) {
-                        Ok(target) if visited.insert(target.clone()) => pending.push_back(
-                            TraversalRoot::new(target, logical_path, root.device, config),
-                        ),
-                        Ok(_) => {}
-                        Err(error) => tracing::warn!("{}: {error}", logical_path.display()),
+                    let target = fs_err::canonicalize(&physical_path).map_err(|error| {
+                        crate::Error::io(logical_path.display().to_string(), error)
+                    })?;
+                    if visited.insert(target.clone()) {
+                        pending.push_back(TraversalRoot::new(
+                            target,
+                            logical_path,
+                            root.device,
+                            config,
+                        )?);
                     }
                 } else if metadata.is_file()
                     && path_allowed(&logical_path, false, config, root.overrides.as_deref())
                     && file_allowed(Some(&metadata), config, needs_meta, seen_inodes)
                 {
-                    emit(logical_path);
+                    emit(logical_path)?;
                 }
                 continue;
             }
@@ -319,13 +318,15 @@ fn walk_dir_entries(
             {
                 continue;
             }
-            emit(logical_path);
+            emit(logical_path)?;
         }
     }
+    Ok(())
 }
 
 fn explicit_file_allowed(
     path: &Path,
+    metadata: &std::fs::Metadata,
     config: &CrawlConfig,
     needs_meta: bool,
     seen_inodes: &mut HashSet<(u64, u64)>,
@@ -339,14 +340,7 @@ fn explicit_file_allowed(
     if !path_allowed(path, false, config, overrides.as_ref()) {
         return false;
     }
-    let metadata = needs_meta.then(|| fs_err::metadata(path)).transpose();
-    match metadata {
-        Ok(metadata) => file_allowed(metadata.as_ref(), config, needs_meta, seen_inodes),
-        Err(error) => {
-            tracing::warn!("{}: {error}", path.display());
-            false
-        }
-    }
+    file_allowed(Some(metadata), config, needs_meta, seen_inodes)
 }
 
 fn path_allowed(
@@ -482,15 +476,19 @@ mod tests {
         cancellation.cancel();
         let mut emitted = Vec::new();
 
-        collect_paths(
+        let result = collect_paths(
             &[file.path().to_owned()],
             &config,
             &mut seen_inodes,
             &stats,
             &cancellation,
-            |path| emitted.push(path),
+            |path| {
+                emitted.push(path);
+                Ok(())
+            },
         );
 
         assert!(emitted.is_empty());
+        assert!(matches!(result, Err(crate::Error::Cancelled)));
     }
 }

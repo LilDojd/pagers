@@ -92,8 +92,18 @@ where
             daemon::ForkOutcome::Parent => Ok(()),
             daemon::ForkOutcome::Child(notify_fd) => {
                 install_signal_handler(self.cancellation)?;
-                let (stats, _locks, _) =
-                    run_cli_with_setup::<O, PM>(&self.op, setup, self.cancellation)?;
+                let (stats, _locks, _) = match run_cli_with_setup::<O, PM>(
+                    &self.op,
+                    setup,
+                    self.cancellation,
+                ) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        tracing::error!("{error}");
+                        daemon::notify_and_redirect(notify_fd, 1);
+                        return Err(error);
+                    }
+                };
                 daemon::hold(&stats, lock, self.cancellation, notify_fd);
                 Ok(())
             }

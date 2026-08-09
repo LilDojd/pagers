@@ -18,7 +18,7 @@ pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
         range: &FileRange,
         stats: &Stats,
         cancellation: &Cancellation,
-    ) -> Option<O::Output>;
+    ) -> crate::Result<Option<O::Output>>;
 
     fn finish(&self) {}
 }
@@ -61,25 +61,15 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         range: &FileRange,
         stats: &Stats,
         cancellation: &Cancellation,
-    ) -> Option<O::Output> {
+    ) -> crate::Result<Option<O::Output>> {
         let path_str: std::sync::Arc<str> = path.display().to_string().into();
         let full_file = FileRange::full();
 
-        let pf = match prepare_file(path, &full_file) {
-            Ok(Some(pf)) => pf,
-            Ok(None) => return None,
-            Err(e) => {
-                tracing::warn!("{}: {e}", path.display());
-                return None;
-            }
+        let pf = match prepare_file(path, &full_file)? {
+            Some(pf) => pf,
+            None => return Ok(None),
         };
-        let residency: PM = match crate::mincore::residency(&pf.mmap, pf.len()) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("{}: {e}", path.display());
-                return None;
-            }
-        };
+        let residency: PM = crate::mincore::residency(&pf.mmap, pf.len())?;
         let pages_in_core = residency.count_filled();
         let total_pages = pf.total_pages();
 
@@ -96,7 +86,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
 
         let prepared_pf = if range.is_full_file() { Some(pf) } else { None };
 
-        let page_offset = usize::try_from(range.offset()).ok()? / *crate::pagesize::PAGE_SIZE;
+        let page_offset = usize::try_from(range.offset())? / *crate::pagesize::PAGE_SIZE;
         let reported_action = std::sync::atomic::AtomicUsize::new(0);
         let on_progress = |pages_walked: usize, action_count: usize| {
             let action = action_count;
@@ -113,19 +103,23 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         };
 
         let prepared_full = prepared_pf.map(|pf| (pf, residency, pages_in_core));
-        let result = match full_process_file::<O, PM>(
+        let processed = full_process_file::<O, PM>(
             op,
             path,
             range,
             Some(&on_progress),
             prepared_full,
             cancellation,
-        ) {
-            Ok(Some(r)) => r,
-            Ok(None) => return None,
-            Err(e) => {
-                tracing::warn!("{e}");
-                return None;
+        );
+        let result = match processed {
+            Ok(Some(result)) => result,
+            Ok(None) => {
+                self.sink.send(Event::FileDone { path: path_str });
+                return Ok(None);
+            }
+            Err(error) => {
+                self.sink.send(Event::FileDone { path: path_str });
+                return Err(error);
             }
         };
 
@@ -149,7 +143,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
 
         self.sink.send(Event::FileDone { path: path_str });
 
-        Some(result.into_output())
+        Ok(Some(result.into_output()))
     }
 
     fn finish(&self) {
@@ -173,14 +167,10 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
         range: &FileRange,
         stats: &Stats,
         cancellation: &Cancellation,
-    ) -> Option<O::Output> {
-        let result = match counts_process_file::<O, PM>(op, path, range, cancellation) {
-            Ok(Some(r)) => r,
-            Ok(None) => return None,
-            Err(e) => {
-                tracing::warn!("{e}");
-                return None;
-            }
+    ) -> crate::Result<Option<O::Output>> {
+        let result = match counts_process_file::<O, PM>(op, path, range, cancellation)? {
+            Some(result) => result,
+            None => return Ok(None),
         };
         cli_record_stats::<O>(&result, stats);
         tracing::info!(
@@ -189,7 +179,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
             result.pages_in_core_after(),
             result.total_pages(),
         );
-        Some(result.into_output())
+        Ok(Some(result.into_output()))
     }
 }
 

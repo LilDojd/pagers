@@ -81,19 +81,21 @@ pub(crate) fn hold(
         output::pretty_size(total * page_size)
     );
 
-    if let Some(fd) = notify_fd {
-        use std::io::Write;
-        let mut file = std::fs::File::from(fd);
-        let _ = file.write_all(&[0u8]);
-        drop(file);
-        redirect_stdio();
-    }
+    notify_and_redirect(notify_fd, 0);
 
-    while !cancellation.is_cancelled() {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    cancellation.wait();
 
     if let Some(p) = &inner.pidfile {
         let _ = fs_err::remove_file(p);
+    }
+}
+
+pub(crate) fn notify_and_redirect(notify_fd: Option<OwnedFd>, status: u8) {
+    if let Some(fd) = notify_fd {
+        use std::io::Write;
+        let mut file = std::fs::File::from(fd);
+        let _ = file.write_all(&[status]);
+        drop(file);
+        redirect_stdio();
     }
 }

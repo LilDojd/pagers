@@ -66,6 +66,29 @@ fn test_daemon_validates_patterns_before_forking() {
     assert!(stderr.contains("invalid path pattern"), "stderr: {stderr}");
 }
 
+#[test]
+fn test_daemon_wait_reports_processing_failure() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    fs_err::write(file.path(), vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "lock",
+            "--daemon",
+            "--wait",
+            "-p",
+            "1M..",
+            "-o",
+            "kv",
+            file.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 fn test_daemon_wait_closes_captured_stdio() {
@@ -487,7 +510,29 @@ fn test_query_nonexistent_file() {
         .output()
         .unwrap();
 
-    let _ = output.status;
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
+}
+
+#[test]
+fn test_query_range_beyond_file_fails() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    fs_err::write(file.path(), vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-p",
+            "1M..",
+            "-o",
+            "kv",
+            file.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
 }
 
 #[test]
@@ -733,6 +778,23 @@ fn test_batch_from_file() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Files=2"), "stdout: {stdout}");
+}
+
+#[test]
+fn test_missing_batch_file_fails() {
+    let output = pagers_bin()
+        .args([
+            "query",
+            "-b",
+            "/nonexistent/pagers-batch-file",
+            "-o",
+            "kv",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
 }
 
 #[test]
