@@ -41,6 +41,39 @@ fn test_max_size() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Files=0"));
 }
 
+#[test]
+fn test_invalid_filter_pattern_fails_cleanly() {
+    let output = pagers_bin()
+        .args(["query", "-I", "[z-a]", "-o", "kv", "README.md"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("invalid path pattern"), "stderr: {stderr}");
+    assert!(!stderr.contains("panicked"), "stderr: {stderr}");
+}
+
+#[test]
+fn test_daemon_validates_patterns_before_forking() {
+    let output = pagers_bin()
+        .args([
+            "lock",
+            "--daemon",
+            "-I",
+            "[z-a]",
+            "-o",
+            "kv",
+            "README.md",
+        ])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("invalid path pattern"), "stderr: {stderr}");
+}
+
 #[cfg(feature = "rayon")]
 #[test]
 fn test_query_single_thread_completes() {

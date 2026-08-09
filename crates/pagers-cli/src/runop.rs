@@ -84,10 +84,11 @@ where
 {
     fn run(self) -> Result<(), Error> {
         let lock = self.lock.expect("daemon requires LockInner");
+        let setup = common_setup(self.common)?;
         match daemon::go_daemon(lock.wait)? {
             daemon::ForkOutcome::Parent => Ok(()),
             daemon::ForkOutcome::Child(notify_fd) => {
-                let (stats, _locks, _) = run_cli::<O, PM>(&self.op, self.common)?;
+                let (stats, _locks, _) = run_cli_with_setup::<O, PM>(&self.op, setup)?;
                 daemon::hold(&stats, lock, self.term, notify_fd);
                 Ok(())
             }
@@ -141,6 +142,7 @@ fn common_setup(
         #[cfg(feature = "rayon")]
         threads: common.threads,
     };
+    crawl::validate_patterns(&crawl_config)?;
 
     Ok((range, extra_paths, crawl_config))
 }
@@ -193,7 +195,20 @@ pub(crate) fn run_cli<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + '
 where
     O::Output: 'static,
 {
-    let (range, extra_paths, crawl_config) = common_setup(common)?;
+    run_cli_with_setup::<O, PM>(op, common_setup(common)?)
+}
+
+fn run_cli_with_setup<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
+    op: &O,
+    (range, extra_paths, crawl_config): (
+        ops::FileRange,
+        Vec<std::path::PathBuf>,
+        crawl::CrawlConfig,
+    ),
+) -> RunResult<O::Output>
+where
+    O::Output: 'static,
+{
     let stats = Arc::new(ops::Stats::new());
     let start = Instant::now();
 

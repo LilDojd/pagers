@@ -36,8 +36,7 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     display: &D,
 ) -> crate::Result<Vec<O::Output>> {
     tracing::info!("starting {} on {} path(s)", O::LABEL, paths.len());
-    // ugly but yeah
-    let _ = build_overrides(Path::new("."), crawl_config);
+    validate_patterns(crawl_config)?;
     let seen_inodes = InodeSet::default();
 
     #[cfg(feature = "rayon")]
@@ -109,6 +108,10 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
         );
         Ok(outputs)
     }
+}
+
+pub fn validate_patterns(config: &CrawlConfig) -> crate::Result<()> {
+    build_overrides(Path::new("."), config).map(drop)
 }
 
 fn collect_paths(
