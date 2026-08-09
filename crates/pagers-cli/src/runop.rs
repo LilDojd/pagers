@@ -1,12 +1,11 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
+use pagers_core::Cancellation;
 use pagers_core::mincore::{DefaultPageMap, PageMap};
 use pagers_core::mode;
 use pagers_core::output::Summary;
 use pagers_core::{crawl, ops};
-use pagers_core::Cancellation;
 
 use crate::Error;
 use crate::cli::{CommonArgs, LockInner, OutputFormatArg};
@@ -19,7 +18,7 @@ pub(crate) trait Run<D, M> {
 pub(crate) struct Cmd<'a, O, PM: PageMap = DefaultPageMap> {
     pub op: O,
     pub common: &'a CommonArgs,
-    pub term: &'a Arc<AtomicBool>,
+    pub cancellation: &'a Cancellation,
     pub format: Option<OutputFormatArg>,
     pub quiet: bool,
     pub lock: Option<&'a LockInner>,
@@ -30,7 +29,7 @@ impl<'a, O, PM: PageMap> Cmd<'a, O, PM> {
     pub fn new(
         op: O,
         common: &'a CommonArgs,
-        term: &'a Arc<AtomicBool>,
+        cancellation: &'a Cancellation,
         format: Option<OutputFormatArg>,
         quiet: bool,
         lock: Option<&'a LockInner>,
@@ -38,7 +37,7 @@ impl<'a, O, PM: PageMap> Cmd<'a, O, PM> {
         Self {
             op,
             common,
-            term,
+            cancellation,
             format,
             quiet,
             lock,
@@ -53,9 +52,9 @@ where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        let (stats, _outputs, _) = run_tui::<O, PM>(&self.op, self.common, self.term)?;
+        let (stats, _outputs, _) = run_tui::<O, PM>(&self.op, self.common, self.cancellation)?;
         if let Some(lock) = self.lock {
-            daemon::hold(&stats, lock, self.term, None);
+            daemon::hold(&stats, lock, self.cancellation, None);
         }
         Ok(())
     }
@@ -67,12 +66,12 @@ where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        let (stats, _, elapsed) = run_cli::<O, PM>(&self.op, self.common, self.term)?;
+        let (stats, _, elapsed) = run_cli::<O, PM>(&self.op, self.common, self.cancellation)?;
         if !self.quiet {
             print_summary::<O>(&stats, elapsed, self.format.unwrap_or_default());
         }
         if let Some(lock) = self.lock {
-            daemon::hold(&stats, lock, self.term, None);
+            daemon::hold(&stats, lock, self.cancellation, None);
         }
         Ok(())
     }
@@ -90,8 +89,8 @@ where
             daemon::ForkOutcome::Parent => Ok(()),
             daemon::ForkOutcome::Child(notify_fd) => {
                 let (stats, _locks, _) =
-                    run_cli_with_setup::<O, PM>(&self.op, setup, self.term)?;
-                daemon::hold(&stats, lock, self.term, notify_fd);
+                    run_cli_with_setup::<O, PM>(&self.op, setup, self.cancellation)?;
+                daemon::hold(&stats, lock, self.cancellation, notify_fd);
                 Ok(())
             }
         }
@@ -141,7 +140,6 @@ fn common_setup(
         max_file_size: common.max_file_size,
         batch,
         nul_delim: common.nul_delim,
-        #[cfg(feature = "rayon")]
         threads: common.threads,
     };
     crawl::validate_patterns(&crawl_config)?;
@@ -152,7 +150,7 @@ fn common_setup(
 pub(crate) fn run_tui<O: ops::Op + Send + 'static, PM: PageMap + Clone + Send + Sync + 'static>(
     op: &O,
     common: &CommonArgs,
-    term: &Arc<AtomicBool>,
+    cancellation: &Cancellation,
 ) -> RunResult<O::Output>
 where
     O::Output: 'static,
@@ -164,13 +162,19 @@ where
     let (tx, rx) = std::sync::mpsc::channel::<pagers_core::events::Event<PM>>();
     let display = mode::Tui::new(tx);
 
-    let term_clone = Arc::clone(term);
+    let tui_cancellation = cancellation.clone();
     let stats_clone = Arc::clone(&stats);
     let tui_label = O::LABEL.to_string();
     let action_sign = O::EFFECT.action_sign();
     let tui_handle = std::thread::spawn(move || {
-        if let Err(e) = pagers_tui::run(rx, term_clone, stats_clone, &tui_label, action_sign, start)
-        {
+        if let Err(e) = pagers_tui::run(
+            rx,
+            tui_cancellation,
+            stats_clone,
+            &tui_label,
+            action_sign,
+            start,
+        ) {
             ::tracing::error!("TUI error: {e}");
         }
     });
@@ -182,7 +186,7 @@ where
         &range,
         &stats,
         &display,
-        Cancellation::new(term),
+        cancellation,
     );
 
     tui_handle.join().expect("TUI thread panicked");
@@ -194,12 +198,12 @@ where
 pub(crate) fn run_cli<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
     op: &O,
     common: &CommonArgs,
-    term: &AtomicBool,
+    cancellation: &Cancellation,
 ) -> RunResult<O::Output>
 where
     O::Output: 'static,
 {
-    run_cli_with_setup::<O, PM>(op, common_setup(common)?, term)
+    run_cli_with_setup::<O, PM>(op, common_setup(common)?, cancellation)
 }
 
 fn run_cli_with_setup<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
@@ -209,7 +213,7 @@ fn run_cli_with_setup<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + '
         Vec<std::path::PathBuf>,
         crawl::CrawlConfig,
     ),
-    term: &AtomicBool,
+    cancellation: &Cancellation,
 ) -> RunResult<O::Output>
 where
     O::Output: 'static,
@@ -225,7 +229,7 @@ where
         &range,
         &stats,
         &display,
-        Cancellation::new(term),
+        cancellation,
     );
 
     let elapsed = start.elapsed().as_secs_f64();

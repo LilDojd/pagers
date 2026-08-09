@@ -2,13 +2,13 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 
+use crate::Cancellation;
 use crate::events::{Event, EventSink};
 use crate::mincore::{DefaultPageMap, PageMap};
 use crate::ops::{
     self, FileContext, FileProcessed, FileRange, Op, PreparedFile, ResidencyEffect, Stats,
     prepare_file,
 };
-use crate::Cancellation;
 
 pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
     fn process_one<O: Op>(
@@ -17,7 +17,7 @@ pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
         path: &Path,
         range: &FileRange,
         stats: &Stats,
-        cancellation: Cancellation<'_>,
+        cancellation: &Cancellation,
     ) -> Option<O::Output>;
 
     fn finish(&self) {}
@@ -60,7 +60,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         path: &Path,
         range: &FileRange,
         stats: &Stats,
-        cancellation: Cancellation<'_>,
+        cancellation: &Cancellation,
     ) -> Option<O::Output> {
         let path_str: std::sync::Arc<str> = path.display().to_string().into();
         let full_file = FileRange::full();
@@ -113,22 +113,21 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         };
 
         let prepared_full = prepared_pf.map(|pf| (pf, residency, pages_in_core));
-        let result =
-            match full_process_file::<O, PM>(
-                op,
-                path,
-                range,
-                Some(&on_progress),
-                prepared_full,
-                cancellation,
-            ) {
-                Ok(Some(r)) => r,
-                Ok(None) => return None,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    return None;
-                }
-            };
+        let result = match full_process_file::<O, PM>(
+            op,
+            path,
+            range,
+            Some(&on_progress),
+            prepared_full,
+            cancellation,
+        ) {
+            Ok(Some(r)) => r,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::warn!("{e}");
+                return None;
+            }
+        };
 
         // Flush remaining action_pages not covered by the progress callback.
         let reported = reported_action.load(Ordering::Relaxed);
@@ -173,7 +172,7 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
         path: &Path,
         range: &FileRange,
         stats: &Stats,
-        cancellation: Cancellation<'_>,
+        cancellation: &Cancellation,
     ) -> Option<O::Output> {
         let result = match counts_process_file::<O, PM>(op, path, range, cancellation) {
             Ok(Some(r)) => r,
@@ -200,7 +199,7 @@ pub(crate) fn full_process_file<O: Op, PM: PageMap + Sync>(
     range: &FileRange,
     on_progress: Option<&(dyn Fn(usize, usize) + Sync)>,
     prepared: Option<(PreparedFile, PM, usize)>,
-    cancellation: Cancellation<'_>,
+    cancellation: &Cancellation,
 ) -> crate::Result<Option<ops::FullResult<O::Output, PM>>> {
     cancellation.check()?;
     let (pf, residency_before, pages_in_core_before) = match prepared {
@@ -215,7 +214,7 @@ pub(crate) fn full_process_file<O: Op, PM: PageMap + Sync>(
         }
     };
 
-    let ctx = FileContext::new(pf, cancellation)
+    let ctx = FileContext::new(pf, cancellation.clone())
         .with_progress(on_progress)
         .with_residency(Some(&residency_before));
 
@@ -256,7 +255,7 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
     op: &O,
     path: &Path,
     range: &FileRange,
-    cancellation: Cancellation<'_>,
+    cancellation: &Cancellation,
 ) -> crate::Result<Option<ops::CountsResult<O::Output>>> {
     cancellation.check()?;
     let Some(pf) = prepare_file(path, range)? else {
@@ -272,7 +271,7 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
         None => counts_page_count::<PM>(&pf.file, &pf.mmap, pf.offset(), pf.len())?,
     };
 
-    let ctx = FileContext::new(pf, cancellation).with_residency(residency.as_ref());
+    let ctx = FileContext::new(pf, cancellation.clone()).with_residency(residency.as_ref());
 
     let output = op.execute(&ctx)?;
     let total_pages = ctx.total_pages();

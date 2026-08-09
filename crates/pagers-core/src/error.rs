@@ -47,10 +47,6 @@ pub enum Error {
     #[error("{0}")]
     TryFromInt(#[from] TryFromIntError),
 
-    #[cfg(feature = "rayon")]
-    #[error("{0}")]
-    ThreadPool(#[from] rayon::ThreadPoolBuildError),
-
     #[error("invalid path pattern: {0}")]
     PathPattern(#[from] ignore::Error),
 

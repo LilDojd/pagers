@@ -57,15 +57,7 @@ fn test_invalid_filter_pattern_fails_cleanly() {
 #[test]
 fn test_daemon_validates_patterns_before_forking() {
     let output = pagers_bin()
-        .args([
-            "lock",
-            "--daemon",
-            "-I",
-            "[z-a]",
-            "-o",
-            "kv",
-            "README.md",
-        ])
+        .args(["lock", "--daemon", "-I", "[z-a]", "-o", "kv", "README.md"])
         .output()
         .unwrap();
 
@@ -121,7 +113,6 @@ fn test_daemon_wait_closes_captured_stdio() {
     );
 }
 
-#[cfg(feature = "rayon")]
 #[test]
 fn test_query_single_thread_completes() {
     let dir = tempfile::tempdir().unwrap();
@@ -530,6 +521,83 @@ fn test_query_with_filter_pattern() {
         stdout.contains("Files=1"),
         "should only process .bin file, got: {stdout}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_follow_symlinked_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    fs_err::write(target.path().join("data.bin"), vec![0u8; 4096]).unwrap();
+    std::os::unix::fs::symlink(target.path(), root.path().join("linked")).unwrap();
+
+    let without_follow = pagers_bin()
+        .args(["query", "-o", "kv", root.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    let with_follow = pagers_bin()
+        .args(["query", "-f", "-o", "kv", root.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(without_follow.status.success());
+    assert!(String::from_utf8_lossy(&without_follow.stdout).contains("Files=0"));
+    assert!(with_follow.status.success());
+    assert!(String::from_utf8_lossy(&with_follow.stdout).contains("Files=1"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_follow_symlink_cycle_completes() {
+    let root = tempfile::tempdir().unwrap();
+    let nested = root.path().join("nested");
+    fs_err::create_dir(&nested).unwrap();
+    fs_err::write(nested.join("data.bin"), vec![0u8; 4096]).unwrap();
+    std::os::unix::fs::symlink(root.path(), nested.join("back")).unwrap();
+
+    let mut child = pagers_bin()
+        .args(["query", "-f", "-o", "kv", root.path().to_str().unwrap()])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            let _ = child.wait();
+            panic!("symlink cycle did not terminate");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_hardlink_policy_uses_walker_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let first = root.path().join("first.bin");
+    let second = root.path().join("second.bin");
+    fs_err::write(&first, vec![0u8; 4096]).unwrap();
+    fs_err::hard_link(&first, &second).unwrap();
+
+    let deduplicated = pagers_bin()
+        .args(["query", "-o", "kv", root.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    let counted = pagers_bin()
+        .args(["query", "-H", "-o", "kv", root.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(deduplicated.status.success());
+    assert!(String::from_utf8_lossy(&deduplicated.stdout).contains("Files=1"));
+    assert!(counted.status.success());
+    assert!(String::from_utf8_lossy(&counted.stdout).contains("Files=2"));
 }
 
 #[test]

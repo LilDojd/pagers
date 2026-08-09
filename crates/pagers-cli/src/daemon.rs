@@ -1,7 +1,5 @@
+use pagers_core::{Cancellation, ops, output};
 use std::os::fd::OwnedFd;
-use std::sync::atomic::AtomicBool;
-
-use pagers_core::{ops, output};
 
 use crate::Error;
 use crate::cli::LockInner;
@@ -66,7 +64,7 @@ fn redirect_stdio() {
 pub(crate) fn hold(
     stats: &ops::Stats,
     inner: &LockInner,
-    term: &AtomicBool,
+    cancellation: &Cancellation,
     notify_fd: Option<OwnedFd>,
 ) {
     if let Some(p) = &inner.pidfile
@@ -91,7 +89,7 @@ pub(crate) fn hold(
         redirect_stdio();
     }
 
-    while !term.load(std::sync::atomic::Ordering::Relaxed) {
+    while !cancellation.is_cancelled() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 

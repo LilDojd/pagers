@@ -1,17 +1,56 @@
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, BufRead};
+use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use ignore::WalkBuilder;
+use dua_core::Order;
 
+use crate::Cancellation;
 use crate::mincore::PageMap;
 use crate::mode::DisplayMode;
 use crate::ops::{FileRange, Op, Stats};
-use crate::par::{InodeSet, SeenInodes as _};
-use crate::Cancellation;
 
-#[cfg(feature = "rayon")]
-pub use crate::par::Threads;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Threads {
+    #[default]
+    All,
+    Exact(NonZeroU16),
+}
+
+impl Threads {
+    pub fn get(self) -> usize {
+        match self {
+            Self::All => std::thread::available_parallelism().map_or(1, NonZeroUsize::get),
+            Self::Exact(threads) => usize::from(threads.get()),
+        }
+    }
+}
+
+impl From<u16> for Threads {
+    fn from(threads: u16) -> Self {
+        NonZeroU16::new(threads).map_or(Self::All, Self::Exact)
+    }
+}
+
+impl std::fmt::Display for Threads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::All => f.write_str("0"),
+            Self::Exact(threads) => write!(f, "{threads}"),
+        }
+    }
+}
+
+impl std::str::FromStr for Threads {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        value.parse::<u16>().map(Self::from)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -24,7 +63,6 @@ pub struct CrawlConfig {
     pub max_file_size: Option<u64>,
     pub batch: Option<PathBuf>,
     pub nul_delim: bool,
-    #[cfg(feature = "rayon")]
     pub threads: Threads,
 }
 
@@ -35,102 +73,34 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     range: &FileRange,
     stats: &Stats,
     display: &D,
-    cancellation: Cancellation<'_>,
+    cancellation: &Cancellation,
 ) -> crate::Result<Vec<O::Output>> {
     cancellation.check()?;
     tracing::info!("starting {} on {} path(s)", O::LABEL, paths.len());
     validate_patterns(crawl_config)?;
-    let seen_inodes = InodeSet::default();
+    let mut seen_inodes = HashSet::new();
+    let mut outputs = Vec::new();
+    collect_paths(
+        paths,
+        crawl_config,
+        &mut seen_inodes,
+        stats,
+        cancellation,
+        |path| {
+            if let Some(output) = display.process_one::<O>(op, &path, range, stats, cancellation) {
+                outputs.push(output);
+            }
+        },
+    );
 
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(crawl_config.threads.num_threads())
-            .build()?;
-
-        let buf = std::thread::available_parallelism().map_or(16, |n| n.get() * 4);
-        let (tx, rx) = std::sync::mpsc::sync_channel::<PathBuf>(buf);
-
-        let outputs = if pool.current_num_threads() == 1 {
-            let mut outputs = Vec::new();
-            collect_paths(paths, crawl_config, &seen_inodes, stats, cancellation, |path| {
-                if let Some(output) =
-                    display.process_one::<O>(op, &path, range, stats, cancellation)
-                {
-                    outputs.push(output);
-                }
-            });
-            outputs
-        } else {
-            pool.install(|| {
-                rayon::scope(|s| {
-                    s.spawn({
-                        let tx = tx;
-                        move |_| {
-                            collect_paths(
-                                paths,
-                                crawl_config,
-                                &seen_inodes,
-                                stats,
-                                cancellation,
-                                |p| {
-                                    let _ = tx.send(p);
-                                },
-                            );
-                        }
-                    });
-
-                    rx.into_iter()
-                        .par_bridge()
-                        .filter_map(|path| {
-                            display.process_one::<O>(op, &path, range, stats, cancellation)
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-        };
-
-        display.finish();
-        op.finish()?;
-        tracing::info!(
-            "done: {} files, {} pages",
-            stats.total_files.load(Ordering::Relaxed),
-            stats.total_pages.load(Ordering::Relaxed),
-        );
-        Ok(outputs)
-    }
-
-    #[cfg(not(feature = "rayon"))]
-    {
-        let mut file_paths = Vec::new();
-        collect_paths(
-            paths,
-            crawl_config,
-            &seen_inodes,
-            stats,
-            cancellation,
-            |p| {
-                file_paths.push(p);
-            },
-        );
-        tracing::info!("discovered {} files", file_paths.len());
-        let outputs = file_paths
-            .iter()
-            .filter_map(|path| {
-                display.process_one::<O>(op, path, range, stats, cancellation)
-            })
-            .collect();
-        display.finish();
-        op.finish()?;
-        tracing::info!(
-            "done: {} files, {} pages",
-            stats.total_files.load(Ordering::Relaxed),
-            stats.total_pages.load(Ordering::Relaxed),
-        );
-        Ok(outputs)
-    }
+    display.finish();
+    op.finish()?;
+    tracing::info!(
+        "done: {} files, {} pages",
+        stats.total_files.load(Ordering::Relaxed),
+        stats.total_pages.load(Ordering::Relaxed),
+    );
+    Ok(outputs)
 }
 
 pub fn validate_patterns(config: &CrawlConfig) -> crate::Result<()> {
@@ -140,9 +110,9 @@ pub fn validate_patterns(config: &CrawlConfig) -> crate::Result<()> {
 fn collect_paths(
     paths: &[PathBuf],
     crawl_config: &CrawlConfig,
-    seen_inodes: &InodeSet,
+    seen_inodes: &mut HashSet<(u64, u64)>,
     stats: &Stats,
-    cancellation: Cancellation<'_>,
+    cancellation: &Cancellation,
     mut emit: impl FnMut(PathBuf),
 ) {
     if cancellation.is_cancelled() {
@@ -184,48 +154,172 @@ fn collect_paths(
     }
 }
 
+struct TraversalRoot {
+    physical: PathBuf,
+    logical: PathBuf,
+    device: Option<u64>,
+    overrides: Option<Arc<ignore::overrides::Override>>,
+    ignored: Option<Arc<ignore::overrides::Override>>,
+}
+
+impl TraversalRoot {
+    fn new(physical: PathBuf, logical: PathBuf, device: Option<u64>, config: &CrawlConfig) -> Self {
+        Self {
+            physical,
+            overrides: build_overrides(&logical, config)
+                .expect("path patterns were validated before traversal")
+                .map(Arc::new),
+            ignored: build_ignore_overrides(&logical, config)
+                .expect("path patterns were validated before traversal")
+                .map(Arc::new),
+            logical,
+            device,
+        }
+    }
+
+    fn logical_path(&self, physical: &Path) -> PathBuf {
+        physical.strip_prefix(&self.physical).map_or_else(
+            |_| physical.to_owned(),
+            |relative| self.logical.join(relative),
+        )
+    }
+}
+
 fn walk_dir_entries(
     root: &Path,
     config: &CrawlConfig,
     needs_meta: bool,
-    seen_inodes: &InodeSet,
-    cancellation: Cancellation<'_>,
+    seen_inodes: &mut HashSet<(u64, u64)>,
+    cancellation: &Cancellation,
     mut emit: impl FnMut(PathBuf),
 ) {
-    let mut builder = WalkBuilder::new(root);
-    builder
-        .follow_links(config.follow_symlinks)
-        .same_file_system(config.single_filesystem)
-        .hidden(false)
-        .git_ignore(false)
-        .git_global(false)
-        .git_exclude(false);
+    use std::os::unix::fs::MetadataExt as _;
 
-    if let Some(overrides) =
-        build_overrides(root, config).expect("path patterns were validated before traversal")
-    {
-        builder.overrides(overrides);
+    let root_metadata = match fs_err::metadata(root) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            tracing::warn!("{}: {error}", root.display());
+            return;
+        }
+    };
+    let root_device = config.single_filesystem.then(|| root_metadata.dev());
+    let physical_root = if config.follow_symlinks && root.is_symlink() {
+        match fs_err::canonicalize(root) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::warn!("{}: {error}", root.display());
+                return;
+            }
+        }
+    } else {
+        root.to_owned()
+    };
+    let mut pending = VecDeque::from([TraversalRoot::new(
+        physical_root.clone(),
+        root.to_owned(),
+        root_device,
+        config,
+    )]);
+    let mut visited = HashSet::new();
+    if config.follow_symlinks {
+        visited.insert(fs_err::canonicalize(&physical_root).unwrap_or(physical_root));
     }
 
-    for entry in builder.build() {
+    while let Some(root) = pending.pop_front() {
         if cancellation.is_cancelled() {
             break;
         }
-        let Ok(entry) = entry.inspect_err(|e| tracing::warn!("{e}")) else {
-            continue;
-        };
 
-        let Some(ft) = entry.file_type() else {
-            continue;
-        };
+        let root = Arc::new(root);
+        let descend_root = Arc::clone(&root);
+        let descend_cancellation = cancellation.clone();
+        let entries = dua_core::walk(
+            &root.physical,
+            config.threads.get(),
+            Order::Completion,
+            move |entry| {
+                if descend_cancellation.is_cancelled() {
+                    return false;
+                }
+                if entry.depth == 0 {
+                    return true;
+                }
+                if descend_root.device.is_some_and(|device| {
+                    entry
+                        .metadata
+                        .as_ref()
+                        .map_or(true, |metadata| metadata.dev() != device)
+                }) {
+                    return false;
+                }
+                let path = descend_root.logical_path(&entry.path());
+                !descend_root
+                    .ignored
+                    .as_ref()
+                    .is_some_and(|overrides| overrides.matched(&path, true).is_ignore())
+            },
+        );
 
-        if !ft.is_file() {
-            continue;
-        }
+        for entry in entries {
+            if cancellation.is_cancelled() {
+                break;
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    tracing::warn!("{error}");
+                    continue;
+                }
+            };
+            if entry.depth == 0 && entry.file_type.is_dir() {
+                continue;
+            }
 
-        let entry_path = entry.path();
-        if file_allowed(entry_path, config, needs_meta, seen_inodes) {
-            emit(entry_path.to_path_buf());
+            let physical_path = entry.path();
+            let logical_path = root.logical_path(&physical_path);
+            if entry.file_type.is_symlink() {
+                if !config.follow_symlinks {
+                    continue;
+                }
+                let metadata = match fs_err::metadata(&physical_path) {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        tracing::warn!("{}: {error}", logical_path.display());
+                        continue;
+                    }
+                };
+                if root.device.is_some_and(|device| metadata.dev() != device) {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    match fs_err::canonicalize(&physical_path) {
+                        Ok(target) if visited.insert(target.clone()) => pending.push_back(
+                            TraversalRoot::new(target, logical_path, root.device, config),
+                        ),
+                        Ok(_) => {}
+                        Err(error) => tracing::warn!("{}: {error}", logical_path.display()),
+                    }
+                } else if metadata.is_file()
+                    && path_allowed(&logical_path, false, config, root.overrides.as_deref())
+                    && file_allowed(Some(&metadata), config, needs_meta, seen_inodes)
+                {
+                    emit(logical_path);
+                }
+                continue;
+            }
+
+            if !entry.file_type.is_file()
+                || !path_allowed(&logical_path, false, config, root.overrides.as_deref())
+                || !file_allowed(
+                    entry.metadata.as_ref().ok(),
+                    config,
+                    needs_meta,
+                    seen_inodes,
+                )
+            {
+                continue;
+            }
+            emit(logical_path);
         }
     }
 }
@@ -234,33 +328,51 @@ fn explicit_file_allowed(
     path: &Path,
     config: &CrawlConfig,
     needs_meta: bool,
-    seen_inodes: &InodeSet,
+    seen_inodes: &mut HashSet<(u64, u64)>,
 ) -> bool {
     let root = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    if let Some(overrides) =
-        build_overrides(root, config).expect("path patterns were validated before traversal")
-    {
-        let matched = overrides.matched(path, false);
-        if matched.is_ignore() || (!config.filter_patterns.is_empty() && !matched.is_whitelist()) {
-            return false;
+    let overrides =
+        build_overrides(root, config).expect("path patterns were validated before traversal");
+    if !path_allowed(path, false, config, overrides.as_ref()) {
+        return false;
+    }
+    let metadata = needs_meta.then(|| fs_err::metadata(path)).transpose();
+    match metadata {
+        Ok(metadata) => file_allowed(metadata.as_ref(), config, needs_meta, seen_inodes),
+        Err(error) => {
+            tracing::warn!("{}: {error}", path.display());
+            false
         }
     }
-    file_allowed(path, config, needs_meta, seen_inodes)
+}
+
+fn path_allowed(
+    path: &Path,
+    is_dir: bool,
+    config: &CrawlConfig,
+    overrides: Option<&ignore::overrides::Override>,
+) -> bool {
+    overrides.is_none_or(|overrides| {
+        let matched = overrides.matched(path, is_dir);
+        !matched.is_ignore() && (config.filter_patterns.is_empty() || matched.is_whitelist())
+    })
 }
 
 fn file_allowed(
-    path: &Path,
+    metadata: Option<&std::fs::Metadata>,
     config: &CrawlConfig,
     needs_meta: bool,
-    seen_inodes: &InodeSet,
+    seen_inodes: &mut HashSet<(u64, u64)>,
 ) -> bool {
-    let meta = needs_meta.then(|| fs_err::metadata(path).ok()).flatten();
+    if needs_meta && metadata.is_none() {
+        return false;
+    }
 
     if let Some(max_size) = config.max_file_size
-        && let Some(ref metadata) = meta
+        && let Some(metadata) = metadata
         && metadata.len() > max_size
     {
         return false;
@@ -270,9 +382,9 @@ fn file_allowed(
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if let Some(ref metadata) = meta
+            if let Some(metadata) = metadata
                 && metadata.nlink() > 1
-                && seen_inodes.already_seen((metadata.dev(), metadata.ino()))
+                && !seen_inodes.insert((metadata.dev(), metadata.ino()))
             {
                 return false;
             }
@@ -296,6 +408,21 @@ fn build_overrides(
     }
     for pattern in &config.filter_patterns {
         overrides.add(pattern)?;
+    }
+    Ok(Some(overrides.build()?))
+}
+
+fn build_ignore_overrides(
+    root: &Path,
+    config: &CrawlConfig,
+) -> crate::Result<Option<ignore::overrides::Override>> {
+    if config.ignore_patterns.is_empty() {
+        return Ok(None);
+    }
+
+    let mut overrides = ignore::overrides::OverrideBuilder::new(root);
+    for pattern in &config.ignore_patterns {
+        overrides.add(&format!("!{pattern}"))?;
     }
     Ok(Some(overrides.build()?))
 }
@@ -324,10 +451,16 @@ pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
-
     use super::*;
     use crate::Cancellation;
+
+    #[test]
+    fn threads_parse_and_display() {
+        assert_eq!("0".parse::<Threads>().unwrap(), Threads::All);
+        assert_eq!("4".parse::<Threads>().unwrap().to_string(), "4");
+        assert_eq!(Threads::from(1).get(), 1);
+        assert!(Threads::All.get() > 0);
+    }
 
     #[test]
     fn cancelled_collection_emits_no_paths() {
@@ -341,20 +474,20 @@ mod tests {
             max_file_size: None,
             batch: None,
             nul_delim: false,
-            #[cfg(feature = "rayon")]
             threads: Threads::default(),
         };
-        let seen_inodes = InodeSet::default();
+        let mut seen_inodes = HashSet::new();
         let stats = Stats::new();
-        let cancelled = AtomicBool::new(true);
+        let cancellation = Cancellation::new();
+        cancellation.cancel();
         let mut emitted = Vec::new();
 
         collect_paths(
             &[file.path().to_owned()],
             &config,
-            &seen_inodes,
+            &mut seen_inodes,
             &stats,
-            Cancellation::new(&cancelled),
+            &cancellation,
             |path| emitted.push(path),
         );
 

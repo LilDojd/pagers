@@ -173,7 +173,7 @@ mod tests {
 
     use super::*;
     use std::io::Write;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::Ordering;
 
     use super::super::*;
 
@@ -198,9 +198,10 @@ mod tests {
         (f, size)
     }
 
-    fn not_cancelled() -> crate::Cancellation<'static> {
-        static FLAG: AtomicBool = AtomicBool::new(false);
-        crate::Cancellation::new(&FLAG)
+    fn not_cancelled() -> &'static crate::Cancellation {
+        static CANCELLATION: std::sync::LazyLock<crate::Cancellation> =
+            std::sync::LazyLock::new(crate::Cancellation::new);
+        &CANCELLATION
     }
 
     macro_rules! process_tests {
@@ -345,17 +346,16 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: FullResult<(), $t> =
-                        mode::full_process_file::<Query, $t>(
-                            &Query,
-                            f.path(),
-                            &range,
-                            None,
-                            None,
-                            not_cancelled(),
-                        )
-                        .unwrap()
-                        .unwrap();
+                    let result: FullResult<(), $t> = mode::full_process_file::<Query, $t>(
+                        &Query,
+                        f.path(),
+                        &range,
+                        None,
+                        None,
+                        not_cancelled(),
+                    )
+                    .unwrap()
+                    .unwrap();
                     assert!(result.residency_after.is_some());
                     assert_eq!(result.residency_after.unwrap().len(), 4);
                 }
@@ -367,17 +367,16 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: FullResult<(), $t> =
-                        mode::full_process_file::<Query, $t>(
-                            &Query,
-                            f.path(),
-                            &range,
-                            None,
-                            None,
-                            not_cancelled(),
-                        )
-                        .unwrap()
-                        .unwrap();
+                    let result: FullResult<(), $t> = mode::full_process_file::<Query, $t>(
+                        &Query,
+                        f.path(),
+                        &range,
+                        None,
+                        None,
+                        not_cancelled(),
+                    )
+                    .unwrap()
+                    .unwrap();
                     assert_eq!(result.pages_in_core_before, result.pages_in_core_after);
                     assert!(result.residency_before.is_none());
                     assert!(result.residency_after.is_some());

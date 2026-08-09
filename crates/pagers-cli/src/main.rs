@@ -1,7 +1,6 @@
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
+use pagers_core::Cancellation;
 use pagers_core::ops;
 
 use clap::Parser;
@@ -41,14 +40,21 @@ fn main() -> ExitCode {
         tracing::init(&output.verbosity);
     }
 
-    let term = Arc::new(AtomicBool::new(false));
-    for sig in signal_hook::consts::TERM_SIGNALS {
-        signal_hook::flag::register_conditional_shutdown(*sig, 1, Arc::clone(&term))
-            .expect("register signal");
-        signal_hook::flag::register(*sig, Arc::clone(&term)).expect("register signal");
-    }
+    let cancellation = Cancellation::new();
+    let signal_cancellation = cancellation.clone();
+    let mut signals = signal_hook::iterator::Signals::new(signal_hook::consts::TERM_SIGNALS)
+        .expect("register signals");
+    std::thread::spawn(move || {
+        for (index, _) in signals.forever().enumerate() {
+            if index == 0 {
+                signal_cancellation.cancel();
+            } else {
+                std::process::exit(1);
+            }
+        }
+    });
 
-    match run(cli, &term) {
+    match run(cli, &cancellation) {
         Ok(()) => ExitCode::SUCCESS,
         Err(Error::DaemonExit(code)) => ExitCode::from(code),
         Err(e) => {
@@ -58,26 +64,26 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: cli::Cli, term: &Arc<AtomicBool>) -> Result<(), Error> {
+fn run(cli: cli::Cli, cancellation: &Cancellation) -> Result<(), Error> {
     match cli.command {
-        Command::Query(ref a) => run_simple(ops::Query, a, term),
-        Command::Touch(ref a) => run_simple(ops::Touch, a, term),
-        Command::Evict(ref a) => run_simple(ops::Evict, a, term),
-        Command::Lock(ref a) => run_lockable(ops::Lock, a, term),
-        Command::Lockall(ref a) => run_lockable(ops::Lockall, a, term),
+        Command::Query(ref a) => run_simple(ops::Query, a, cancellation),
+        Command::Touch(ref a) => run_simple(ops::Touch, a, cancellation),
+        Command::Evict(ref a) => run_simple(ops::Evict, a, cancellation),
+        Command::Lock(ref a) => run_lockable(ops::Lock, a, cancellation),
+        Command::Lockall(ref a) => run_lockable(ops::Lockall, a, cancellation),
     }
 }
 
 fn run_simple<O: ops::Op + Send + 'static>(
     op: O,
     a: &WithCommon<()>,
-    term: &Arc<AtomicBool>,
+    cancellation: &Cancellation,
 ) -> Result<(), Error>
 where
     O::Output: 'static,
 {
     let quiet = a.output.is_quiet();
-    let cmd = C::new(op, a.common(), term, a.output.format, quiet, None);
+    let cmd = C::new(op, a.common(), cancellation, a.output.format, quiet, None);
     if a.output.format.is_some() || quiet {
         Run::<mode::NoDaemon, mode::CliMode>::run(cmd)
     } else {
@@ -88,14 +94,21 @@ where
 fn run_lockable<O: ops::Op + Send + 'static>(
     op: O,
     a: &WithCommon<LockInner>,
-    term: &Arc<AtomicBool>,
+    cancellation: &Cancellation,
 ) -> Result<(), Error>
 where
     O::Output: 'static,
 {
     let quiet = a.output.is_quiet();
     let use_cli = a.output.format.is_some() || quiet;
-    let cmd = C::new(op, a.common(), term, a.output.format, quiet, Some(&a.inner));
+    let cmd = C::new(
+        op,
+        a.common(),
+        cancellation,
+        a.output.format,
+        quiet,
+        Some(&a.inner),
+    );
     match (a.inner.daemon, use_cli) {
         (true, _) => Run::<mode::Daemon, mode::CliMode>::run(cmd),
         (_, true) => Run::<mode::NoDaemon, mode::CliMode>::run(cmd),

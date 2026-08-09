@@ -9,11 +9,11 @@ pub use state::FileState;
 
 use std::io::{self, Stdout};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use color_eyre::Result;
+use pagers_core::Cancellation;
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::mincore::PageMap;
 use pagers_core::ops::Stats;
@@ -113,7 +113,7 @@ fn drain_events<PM: PageMap>(
 
 pub fn run<PM: PageMap + Send + 'static>(
     rx: mpsc::Receiver<CoreEvent<PM>>,
-    term: Arc<AtomicBool>,
+    cancellation: Cancellation,
     core_stats: Arc<Stats>,
     label: &str,
     action_sign: isize,
@@ -124,8 +124,7 @@ pub fn run<PM: PageMap + Send + 'static>(
     let viewport_height = MAX_DISPLAY_FILES + stats::SUMMARY_LINES;
     let mut guard = TerminalGuard::new(viewport_height)?;
 
-    let term_cleanup = Arc::clone(&term);
-    let tui_rx = event::spawn_event_threads(rx, term);
+    let tui_rx = event::spawn_event_threads(rx, cancellation.clone());
     let mut app = App::new();
     let mut file_rows_hwm: u16 = 0;
     let ctx = RenderContext {
@@ -166,7 +165,7 @@ pub fn run<PM: PageMap + Send + 'static>(
     };
 
     if matches!(flow, app::ControlFlow::Quit) {
-        term_cleanup.store(true, std::sync::atomic::Ordering::Relaxed);
+        cancellation.cancel();
     }
 
     if matches!(flow, app::ControlFlow::Done) {

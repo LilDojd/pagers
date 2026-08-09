@@ -1,9 +1,8 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use pagers_core::Cancellation;
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::mincore::DefaultPageMap;
 
@@ -15,23 +14,21 @@ pub(crate) enum TuiEvent<PM = DefaultPageMap> {
 
 pub(crate) fn spawn_event_threads<PM: Send + 'static>(
     core_rx: mpsc::Receiver<CoreEvent<PM>>,
-    term: Arc<AtomicBool>,
+    cancellation: Cancellation,
 ) -> mpsc::Receiver<TuiEvent<PM>> {
     let (tui_tx, tui_rx) = mpsc::channel::<TuiEvent<PM>>();
 
-    let signal_term = Arc::clone(&term);
+    let signal_cancellation = cancellation.clone();
     let signal_tx = tui_tx.clone();
     thread::spawn(move || {
-        while !signal_term.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(50));
-        }
+        signal_cancellation.wait();
         let _ = signal_tx.send(TuiEvent::Quit);
     });
 
-    let key_term = Arc::clone(&term);
+    let key_cancellation = cancellation;
     let key_tx = tui_tx.clone();
     thread::spawn(move || {
-        while !key_term.load(Ordering::Relaxed) {
+        while !key_cancellation.is_cancelled() {
             if crossterm::event::poll(Duration::from_millis(100)).unwrap_or(false)
                 && let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
             {
@@ -41,7 +38,7 @@ pub(crate) fn spawn_event_threads<PM: Send + 'static>(
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::CONTROL));
                 if is_quit {
-                    key_term.store(true, Ordering::Relaxed);
+                    key_cancellation.cancel();
                     let _ = key_tx.send(TuiEvent::Quit);
                     return;
                 }

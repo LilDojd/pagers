@@ -12,8 +12,8 @@ use std::sync::atomic::AtomicUsize;
 
 use memmap2::Mmap;
 
-use crate::mincore::{DefaultPageMap, PageMap};
 use crate::Cancellation;
+use crate::mincore::{DefaultPageMap, PageMap};
 
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
@@ -76,13 +76,13 @@ pub trait Op: Sync {
 
 pub struct FileContext<'a, PM: PageMap = DefaultPageMap> {
     prepared: PreparedFile,
-    cancellation: Cancellation<'a>,
+    cancellation: Cancellation,
     on_progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
     residency: Option<&'a PM>,
 }
 
 impl<'a, PM: PageMap> FileContext<'a, PM> {
-    pub(crate) fn new(prepared: PreparedFile, cancellation: Cancellation<'a>) -> Self {
+    pub(crate) fn new(prepared: PreparedFile, cancellation: Cancellation) -> Self {
         Self {
             prepared,
             cancellation,
@@ -255,7 +255,6 @@ impl Stats {
 mod tests {
     use std::io::Write;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::Cancellation;
 
@@ -288,10 +287,8 @@ mod tests {
         .unwrap()
         .unwrap();
         let mmap = Arc::clone(&prepared.mmap);
-        let cancelled = AtomicBool::new(false);
 
-        let context: FileContext<'_, Vec<bool>> =
-            FileContext::new(prepared, Cancellation::new(&cancelled));
+        let context: FileContext<'_, Vec<bool>> = FileContext::new(prepared, Cancellation::new());
 
         assert_eq!(context.len(), mmap.len());
         assert_eq!(context.path(), file.path());
@@ -306,13 +303,13 @@ mod tests {
         let prepared = prepare_file(file.path(), &FileRange::full())
             .unwrap()
             .unwrap();
-        let cancelled = AtomicBool::new(false);
+        let cancellation = Cancellation::new();
+        let context_cancellation = cancellation.clone();
         let cancel_after_progress = |_: usize, _: usize| {
-            cancelled.store(true, Ordering::Relaxed);
+            cancellation.cancel();
         };
-        let context: FileContext<'_, Vec<bool>> =
-            FileContext::new(prepared, Cancellation::new(&cancelled))
-                .with_progress(Some(&cancel_after_progress));
+        let context: FileContext<'_, Vec<bool>> = FileContext::new(prepared, context_cancellation)
+            .with_progress(Some(&cancel_after_progress));
 
         let result = Touch.execute(&context);
 
