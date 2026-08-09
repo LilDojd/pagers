@@ -4,8 +4,8 @@ mod state;
 mod stats;
 mod ui;
 
-pub use app::App;
-pub use state::FileState;
+pub(crate) use app::App;
+pub(crate) use state::FileState;
 
 use std::io::{self, Stdout};
 use std::sync::Arc;

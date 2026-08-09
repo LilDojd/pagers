@@ -17,7 +17,7 @@ use crate::mincore::{DefaultPageMap, PageMap};
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
 pub use lockall::Lockall;
-pub use process::{CountsResult, FileProcessed, FullResult, SkipResult, file_info};
+pub(crate) use process::{CountsResult, FileProcessed, FullResult, SkipResult, file_info};
 pub(crate) use process::{PreparedFile, prepare_file};
 pub use query::Query;
 pub use touch::Touch;
@@ -49,13 +49,13 @@ pub trait Op: Sync {
 }
 
 pub struct FileContext<'a, PM: PageMap = DefaultPageMap> {
-    pub file: &'a File,
-    pub path: &'a Path,
-    pub mmap: Arc<Mmap>,
-    pub offset: u64,
-    pub len: usize,
-    pub on_progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
-    pub residency: Option<&'a PM>,
+    pub(crate) file: &'a File,
+    pub(crate) path: &'a Path,
+    pub(crate) mmap: Arc<Mmap>,
+    pub(crate) offset: u64,
+    pub(crate) len: usize,
+    pub(crate) on_progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
+    pub(crate) residency: Option<&'a PM>,
 }
 
 impl<PM: PageMap> std::fmt::Debug for FileContext<'_, PM> {
@@ -76,7 +76,7 @@ pub struct FileRange {
 }
 
 impl FileRange {
-    pub fn is_full_file(&self) -> bool {
+    pub(crate) fn is_full_file(&self) -> bool {
         self.offset == 0 && self.max_len.is_none()
     }
 }
@@ -84,8 +84,8 @@ impl FileRange {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileInfo<PM = DefaultPageMap> {
-    pub total_pages: usize,
-    pub residency: PM,
+    total_pages: usize,
+    residency: PM,
 }
 
 #[derive(Debug)]

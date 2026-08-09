@@ -21,12 +21,12 @@ pub trait FileProcessed {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FullResult<O, PM> {
-    pub output: O,
-    pub total_pages: usize,
-    pub pages_in_core_before: usize,
-    pub pages_in_core_after: usize,
-    pub residency_before: Option<PM>,
-    pub residency_after: Option<PM>,
+    pub(crate) output: O,
+    pub(crate) total_pages: usize,
+    pub(crate) pages_in_core_before: usize,
+    pub(crate) pages_in_core_after: usize,
+    pub(crate) residency_before: Option<PM>,
+    pub(crate) residency_after: Option<PM>,
 }
 
 impl<O, PM> FileProcessed for FullResult<O, PM> {
@@ -50,9 +50,9 @@ impl<O, PM> FileProcessed for FullResult<O, PM> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CountsResult<O> {
-    pub output: O,
-    pub total_pages: usize,
-    pub pages_in_core_after: usize,
+    pub(crate) output: O,
+    pub(crate) total_pages: usize,
+    pub(crate) pages_in_core_after: usize,
 }
 
 impl<O> FileProcessed for CountsResult<O> {
@@ -73,8 +73,8 @@ impl<O> FileProcessed for CountsResult<O> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkipResult<O> {
-    pub output: O,
-    pub total_pages: usize,
+    pub(crate) output: O,
+    pub(crate) total_pages: usize,
 }
 
 impl<O> FileProcessed for SkipResult<O> {

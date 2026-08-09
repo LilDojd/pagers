@@ -3,15 +3,15 @@ use std::sync::Arc;
 use pagers_core::mincore::{DefaultPageMap, PageMap, PageMapSlice as _};
 
 pub struct FileState<PM: PageMap = DefaultPageMap> {
-    pub path: Arc<str>,
-    pub total_pages: usize,
-    pub pages_in_core: usize,
-    pub residency: PM,
-    pub done: bool,
+    pub(crate) path: Arc<str>,
+    pub(crate) total_pages: usize,
+    pub(crate) pages_in_core: usize,
+    pub(crate) residency: PM,
+    pub(crate) done: bool,
 }
 
 impl<PM: PageMap> FileState<PM> {
-    pub fn ratio(&self) -> f64 {
+    pub(crate) fn ratio(&self) -> f64 {
         if self.total_pages == 0 {
             return 0.0;
         }
@@ -20,7 +20,7 @@ impl<PM: PageMap> FileState<PM> {
 
     /// Downsample the residency bitmap into `width` buckets.
     /// Returns a vec of (cached_count, total_count) per bucket.
-    pub fn bucketize(&self, width: usize) -> Vec<(usize, usize)> {
+    pub(crate) fn bucketize(&self, width: usize) -> Vec<(usize, usize)> {
         let n = self.total_pages;
 
         if width == 0 || n == 0 {

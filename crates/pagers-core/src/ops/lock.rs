@@ -17,7 +17,7 @@ pub struct Lock;
 #[derive(Debug)]
 pub struct LockedFile {
     _mmap: Arc<Mmap>,
-    pub pages_touched: usize,
+    pub(crate) pages_touched: usize,
 }
 
 impl Op for Lock {

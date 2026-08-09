@@ -25,7 +25,7 @@ impl<PM: PageMap> Default for App<PM> {
 }
 
 impl<PM: PageMap> App<PM> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             files: Vec::new(),
             file_index: HashMap::new(),
@@ -81,13 +81,13 @@ impl<PM: PageMap> App<PM> {
         }
     }
 
-    pub fn files(&self) -> Vec<&FileState<PM>> {
+    fn files(&self) -> Vec<&FileState<PM>> {
         self.files.iter().collect()
     }
 
     /// Return files for the live TUI viewport: sorted by size descending
     /// (path tiebreaker), with done files hidden when total exceeds `max`.
-    pub fn visible_files(&self, max: usize) -> Vec<&FileState<PM>> {
+    pub(crate) fn visible_files(&self, max: usize) -> Vec<&FileState<PM>> {
         let mut files: Vec<&FileState<PM>> = self.files.iter().collect();
         files.sort_by(|a, b| {
             b.total_pages

@@ -33,11 +33,11 @@ pub enum Event<PM = DefaultPageMap> {
 pub struct EventSink<PM>(Mutex<Sender<Event<PM>>>);
 
 impl<PM> EventSink<PM> {
-    pub fn new(sender: Sender<Event<PM>>) -> Self {
+    pub(crate) fn new(sender: Sender<Event<PM>>) -> Self {
         Self(Mutex::new(sender))
     }
 
-    pub fn send(&self, event: Event<PM>) {
+    pub(crate) fn send(&self, event: Event<PM>) {
         let _ = self.0.lock().unwrap().send(event);
     }
 }

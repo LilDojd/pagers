@@ -2,7 +2,7 @@
 
 use std::sync::LazyLock;
 
-pub static SUPPORTED: LazyLock<bool> = LazyLock::new(probe_support);
+pub(crate) static SUPPORTED: LazyLock<bool> = LazyLock::new(probe_support);
 
 #[cfg(target_os = "linux")]
 fn probe_support() -> bool {
@@ -58,7 +58,7 @@ mod internals {
 }
 
 #[cfg(target_os = "linux")]
-pub fn cached_pages(
+pub(crate) fn cached_pages(
     fd: std::os::unix::io::BorrowedFd<'_>,
     offset: u64,
     len: u64,

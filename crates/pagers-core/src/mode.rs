@@ -298,7 +298,7 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
     }))
 }
 
-pub(crate) fn skip_process_file<O: Op, PM: PageMap + Sync>(
+fn skip_process_file<O: Op, PM: PageMap + Sync>(
     op: &O,
     path: &Path,
     range: &FileRange,
