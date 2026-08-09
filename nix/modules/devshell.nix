@@ -52,7 +52,7 @@
             cargo-flamegraph
             samply
             typos
-            inputs.omnix.packages.${system}.default
+            omnix
           ]
           ++ lib.optionals pkgs.stdenv.isLinux [
             perf

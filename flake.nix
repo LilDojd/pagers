@@ -23,16 +23,12 @@
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    omnix = {
-      url = "github:juspay/omnix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs =
     inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = import inputs.systems;
+      systems = builtins.filter (system: system != "x86_64-darwin") (import inputs.systems);
 
       # See ./nix/modules/*.nix for the modules that are imported here.
       imports =
