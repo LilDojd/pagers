@@ -87,6 +87,29 @@ fn test_daemon_wait_reports_processing_failure() {
     assert!(!output.stderr.is_empty());
 }
 
+#[test]
+fn test_daemon_wait_reports_pidfile_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("lock.dat");
+    fs_err::write(&file, vec![0u8; 4096]).unwrap();
+    let pidfile = dir.path().join("missing/pagers.pid");
+
+    let output = pagers_bin()
+        .args([
+            "lock",
+            "--daemon",
+            "--wait",
+            "--pidfile",
+            pidfile.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pidfile"));
+}
+
 #[cfg(unix)]
 #[test]
 fn test_daemon_wait_closes_captured_stdio() {

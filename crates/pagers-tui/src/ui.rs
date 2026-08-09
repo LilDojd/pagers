@@ -121,7 +121,6 @@ fn truncate_path(path: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bitvec::prelude::Lsb0;
     use ratatui_core::backend::TestBackend;
     use ratatui_core::terminal::Terminal;
 
@@ -136,7 +135,12 @@ mod tests {
         s
     }
 
-    fn render_file_list(files: &[&FileState], max_rows: u16, width: u16, height: u16) -> String {
+    fn render_file_list<PM: PageMap>(
+        files: &[&FileState<PM>],
+        max_rows: u16,
+        width: u16,
+        height: u16,
+    ) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -147,7 +151,7 @@ mod tests {
         buffer_to_string(terminal.backend().buffer())
     }
 
-    fn render_single_file(file: &FileState, width: u16) -> String {
+    fn render_single_file<PM: PageMap>(file: &FileState<PM>, width: u16) -> String {
         let backend = TestBackend::new(width, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -170,8 +174,8 @@ mod tests {
             total_pages: 100,
             pages_in_core: 75,
             residency: {
-                let mut r = bitvec::bitvec![1; 75];
-                r.extend(bitvec::bitvec![0; 25]);
+                let mut r = vec![true; 75];
+                r.extend(vec![false; 25]);
                 r
             },
             done: false,
@@ -189,7 +193,7 @@ mod tests {
             path: "/tmp/done.bin".into(),
             total_pages: 100,
             pages_in_core: 100,
-            residency: bitvec::bitvec![1; 100],
+            residency: vec![true; 100],
             done: true,
         };
         let content = render_single_file(&file, 80);
@@ -209,8 +213,8 @@ mod tests {
 
     #[test]
     fn test_page_map_shows_cached_regions() {
-        let mut residency = bitvec::bitvec![1; 50];
-        residency.extend(bitvec::bitvec![0; 50]);
+        let mut residency = vec![true; 50];
+        residency.extend(vec![false; 50]);
         let file = FileState {
             path: "/test.bin".into(),
             total_pages: 100,
@@ -229,7 +233,9 @@ mod tests {
             path: "t".into(),
             total_pages: 10,
             pages_in_core: 5,
-            residency: bitvec::bitvec![1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
+            residency: vec![
+                true, true, true, true, true, false, false, false, false, false,
+            ],
             done: false,
         };
         let buckets = file.bucketize(5);
@@ -247,7 +253,7 @@ mod tests {
             path: "t".into(),
             total_pages: 1,
             pages_in_core: 0,
-            residency: bitvec::bitvec![0; 1],
+            residency: vec![false; 1],
             done: false,
         };
         let buckets = file.bucketize(1);
@@ -261,7 +267,7 @@ mod tests {
             path: "t".into(),
             total_pages: 1,
             pages_in_core: 1,
-            residency: bitvec::bitvec![1],
+            residency: vec![true],
             done: false,
         };
         let buckets = file.bucketize(1);

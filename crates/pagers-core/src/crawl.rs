@@ -27,6 +27,11 @@ impl Threads {
             Self::Exact(threads) => usize::from(threads.get()),
         }
     }
+
+    fn effective(self) -> usize {
+        self.get()
+            .min(std::thread::available_parallelism().map_or(1, NonZeroUsize::get))
+    }
 }
 
 impl From<u16> for Threads {
@@ -100,29 +105,35 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     let stop = AtomicBool::new(false);
     let outputs = Mutex::new(Vec::with_capacity(files.len()));
     let first_error = Mutex::new(None);
-    let workers = crawl_config.threads.get().min(files.len());
+    let workers = crawl_config.threads.effective().min(files.len());
     let worker_result: crate::Result<()> = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(workers);
         for _ in 0..workers {
-            handles.push(scope.spawn(|| {
-                while !stop.load(Ordering::Relaxed) {
-                    let index = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(path) = files.get(index) else {
-                        break;
-                    };
-                    match display.process_one::<O>(op, path, range, stats, cancellation) {
-                        Ok(Some(output)) => outputs.lock().unwrap().push((index, output)),
-                        Ok(None) => {}
-                        Err(error) => {
-                            stop.store(true, Ordering::Relaxed);
-                            let mut first = first_error.lock().unwrap();
-                            if first.is_none() {
-                                *first = Some(error);
+            handles.push(
+                std::thread::Builder::new()
+                    .spawn_scoped(scope, || {
+                        while !stop.load(Ordering::Relaxed) {
+                            let index = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(path) = files.get(index) else {
+                                break;
+                            };
+                            match display.process_one::<O>(op, path, range, stats, cancellation) {
+                                Ok(Some(output)) => {
+                                    outputs.lock().unwrap().push((index, output));
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    stop.store(true, Ordering::Relaxed);
+                                    let mut first = first_error.lock().unwrap();
+                                    if first.is_none() {
+                                        *first = Some(error);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-            }));
+                    })
+                    .map_err(|error| crate::Error::io("spawn file worker", error))?,
+            );
         }
         for handle in handles {
             handle.join().map_err(|_| crate::Error::WorkerPanic)?;
@@ -275,12 +286,14 @@ fn walk_dir_entries(
         let root = Arc::new(root);
         let descend_root = Arc::clone(&root);
         let descend_cancellation = cancellation.clone();
+        let walk_stop = Arc::new(AtomicBool::new(false));
+        let descend_stop = Arc::clone(&walk_stop);
         let entries = dua_core::walk(
             &root.physical,
-            config.threads.get(),
+            config.threads.effective(),
             Order::Completion,
             move |entry| {
-                if descend_cancellation.is_cancelled() {
+                if descend_cancellation.is_cancelled() || descend_stop.load(Ordering::Relaxed) {
                     return false;
                 }
                 if entry.depth == 0 {
@@ -308,13 +321,13 @@ fn walk_dir_entries(
                 continue;
             }
             if cancellation.is_cancelled() {
+                walk_stop.store(true, Ordering::Relaxed);
                 walk_error = Some(crate::Error::Cancelled);
                 continue;
             }
             let result = (|| -> crate::Result<()> {
-                let entry = entry_result.map_err(|error| {
-                    crate::Error::io(root.logical.display().to_string(), error)
-                })?;
+                let entry = entry_result
+                    .map_err(|error| crate::Error::io(root.logical.display().to_string(), error))?;
                 if entry.depth == 0 && entry.file_type.is_dir() {
                     return Ok(());
                 }
@@ -380,6 +393,7 @@ fn walk_dir_entries(
                 Ok(())
             })();
             if let Err(error) = result {
+                walk_stop.store(true, Ordering::Relaxed);
                 walk_error = Some(error);
             }
         }
@@ -523,6 +537,10 @@ mod tests {
         assert_eq!("4".parse::<Threads>().unwrap().to_string(), "4");
         assert_eq!(Threads::from(1).get(), 1);
         assert!(Threads::All.get() > 0);
+        assert_eq!(
+            Threads::Exact(NonZeroU16::new(u16::MAX).unwrap()).effective(),
+            Threads::All.get()
+        );
     }
 
     #[test]

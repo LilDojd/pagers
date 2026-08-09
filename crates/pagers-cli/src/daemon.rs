@@ -75,7 +75,7 @@ pub(crate) fn hold(
             source,
         ));
         if notify_fd.is_some() {
-            tracing::error!("{error}");
+            eprintln!("{error}");
         }
         notify_and_redirect(notify_fd.take(), 1);
         return Err(error);
