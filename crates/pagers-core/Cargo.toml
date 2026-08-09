@@ -18,7 +18,7 @@ serde = ["dep:serde", "bitvec?/serde"]
 log-max-level-info = ["tracing/max_level_info"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive", "rc"], optional = true }
 bitvec = { workspace = true, optional = true }
 dashmap = { version = "6", optional = true }
 fs-err = { workspace = true }
