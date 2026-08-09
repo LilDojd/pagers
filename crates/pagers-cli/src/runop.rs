@@ -6,6 +6,7 @@ use pagers_core::mincore::{DefaultPageMap, PageMap};
 use pagers_core::mode;
 use pagers_core::output::Summary;
 use pagers_core::{crawl, ops};
+use pagers_core::Cancellation;
 
 use crate::Error;
 use crate::cli::{CommonArgs, LockInner, OutputFormatArg};
@@ -66,7 +67,7 @@ where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        let (stats, _, elapsed) = run_cli::<O, PM>(&self.op, self.common)?;
+        let (stats, _, elapsed) = run_cli::<O, PM>(&self.op, self.common, self.term)?;
         if !self.quiet {
             print_summary::<O>(&stats, elapsed, self.format.unwrap_or_default());
         }
@@ -88,7 +89,8 @@ where
         match daemon::go_daemon(lock.wait)? {
             daemon::ForkOutcome::Parent => Ok(()),
             daemon::ForkOutcome::Child(notify_fd) => {
-                let (stats, _locks, _) = run_cli_with_setup::<O, PM>(&self.op, setup)?;
+                let (stats, _locks, _) =
+                    run_cli_with_setup::<O, PM>(&self.op, setup, self.term)?;
                 daemon::hold(&stats, lock, self.term, notify_fd);
                 Ok(())
             }
@@ -180,6 +182,7 @@ where
         &range,
         &stats,
         &display,
+        Cancellation::new(term),
     );
 
     tui_handle.join().expect("TUI thread panicked");
@@ -191,11 +194,12 @@ where
 pub(crate) fn run_cli<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
     op: &O,
     common: &CommonArgs,
+    term: &AtomicBool,
 ) -> RunResult<O::Output>
 where
     O::Output: 'static,
 {
-    run_cli_with_setup::<O, PM>(op, common_setup(common)?)
+    run_cli_with_setup::<O, PM>(op, common_setup(common)?, term)
 }
 
 fn run_cli_with_setup<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + 'static>(
@@ -205,6 +209,7 @@ fn run_cli_with_setup<O: ops::Op + Send + 'static, PM: PageMap + Send + Sync + '
         Vec<std::path::PathBuf>,
         crawl::CrawlConfig,
     ),
+    term: &AtomicBool,
 ) -> RunResult<O::Output>
 where
     O::Output: 'static,
@@ -220,6 +225,7 @@ where
         &range,
         &stats,
         &display,
+        Cancellation::new(term),
     );
 
     let elapsed = start.elapsed().as_secs_f64();

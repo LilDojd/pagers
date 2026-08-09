@@ -16,6 +16,7 @@ impl Op for Touch {
     fn execute<PM: PageMap + Sync>(&self, ctx: &FileContext<'_, PM>) -> crate::Result<usize> {
         let mmap = ctx.mmap();
         let len = ctx.len();
+        ctx.check_cancelled()?;
 
         if len == 0 {
             return Ok(0);
@@ -31,10 +32,11 @@ impl Op for Touch {
         if (0..total_pages).any(|i| needs_touch(&i)) {
             const PROGRESS_INTERVAL: usize = 256;
 
-            std::thread::scope(|s| {
+            std::thread::scope(|s| -> crate::Result<()> {
                 s.spawn(|| initiate_readahead(ctx));
 
                 for page_idx in (0..total_pages).filter(needs_touch) {
+                    ctx.check_cancelled()?;
                     let offset = page_idx * page_size;
                     unsafe {
                         std::ptr::read_volatile(mmap.as_ptr().add(offset));
@@ -44,7 +46,8 @@ impl Op for Touch {
                         ctx.report_progress(page_idx + 1, touched);
                     }
                 }
-            });
+                Ok(())
+            })?;
         }
 
         Ok(touched)

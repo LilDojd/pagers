@@ -173,7 +173,7 @@ mod tests {
 
     use super::*;
     use std::io::Write;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::super::*;
 
@@ -198,6 +198,11 @@ mod tests {
         (f, size)
     }
 
+    fn not_cancelled() -> crate::Cancellation<'static> {
+        static FLAG: AtomicBool = AtomicBool::new(false);
+        crate::Cancellation::new(&FLAG)
+    }
+
     macro_rules! process_tests {
         ($t:ty, $mod:ident) => {
             mod $mod {
@@ -210,9 +215,14 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result = mode::counts_process_file::<Query, $t>(&Query, f.path(), &range)
-                        .unwrap()
-                        .unwrap();
+                    let result = mode::counts_process_file::<Query, $t>(
+                        &Query,
+                        f.path(),
+                        &range,
+                        not_cancelled(),
+                    )
+                    .unwrap()
+                    .unwrap();
                     assert_eq!(result.total_pages, 4);
                 }
 
@@ -223,8 +233,13 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result: Option<CountsResult<()>> =
-                        mode::counts_process_file::<Query, $t>(&Query, f.path(), &range).unwrap();
+                    let result: Option<CountsResult<()>> = mode::counts_process_file::<Query, $t>(
+                        &Query,
+                        f.path(),
+                        &range,
+                        not_cancelled(),
+                    )
+                    .unwrap();
                     assert!(result.is_none());
                 }
 
@@ -236,7 +251,12 @@ mod tests {
                         max_len: None,
                     };
                     let result: crate::Result<Option<CountsResult<()>>> =
-                        mode::counts_process_file::<Query, $t>(&Query, f.path(), &range);
+                        mode::counts_process_file::<Query, $t>(
+                            &Query,
+                            f.path(),
+                            &range,
+                            not_cancelled(),
+                        );
                     assert!(result.is_err());
                     let err = result.unwrap_err();
                     assert!(
@@ -253,9 +273,14 @@ mod tests {
                         offset: 0,
                         max_len: Some((page_size * 2) as u64),
                     };
-                    let result = mode::counts_process_file::<Query, $t>(&Query, f.path(), &range)
-                        .unwrap()
-                        .unwrap();
+                    let result = mode::counts_process_file::<Query, $t>(
+                        &Query,
+                        f.path(),
+                        &range,
+                        not_cancelled(),
+                    )
+                    .unwrap()
+                    .unwrap();
                     assert_eq!(result.total_pages, 2);
                 }
 
@@ -267,8 +292,20 @@ mod tests {
                         max_len: None,
                     };
 
-                    mode::counts_process_file::<Evict, $t>(&Evict, f.path(), &range).unwrap();
-                    mode::counts_process_file::<Touch, $t>(&Touch, f.path(), &range).unwrap();
+                    mode::counts_process_file::<Evict, $t>(
+                        &Evict,
+                        f.path(),
+                        &range,
+                        not_cancelled(),
+                    )
+                    .unwrap();
+                    mode::counts_process_file::<Touch, $t>(
+                        &Touch,
+                        f.path(),
+                        &range,
+                        not_cancelled(),
+                    )
+                    .unwrap();
 
                     let file = fs_err::File::open(f.path()).unwrap();
                     let mmap_check = unsafe {
@@ -292,7 +329,12 @@ mod tests {
                         max_len: None,
                     };
                     let result: crate::Result<Option<CountsResult<()>>> =
-                        mode::counts_process_file::<Evict, $t>(&Evict, f.path(), &range);
+                        mode::counts_process_file::<Evict, $t>(
+                            &Evict,
+                            f.path(),
+                            &range,
+                            not_cancelled(),
+                        );
                     assert!(result.is_ok());
                 }
 
@@ -304,9 +346,16 @@ mod tests {
                         max_len: None,
                     };
                     let result: FullResult<(), $t> =
-                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None, None)
-                            .unwrap()
-                            .unwrap();
+                        mode::full_process_file::<Query, $t>(
+                            &Query,
+                            f.path(),
+                            &range,
+                            None,
+                            None,
+                            not_cancelled(),
+                        )
+                        .unwrap()
+                        .unwrap();
                     assert!(result.residency_after.is_some());
                     assert_eq!(result.residency_after.unwrap().len(), 4);
                 }
@@ -319,9 +368,16 @@ mod tests {
                         max_len: None,
                     };
                     let result: FullResult<(), $t> =
-                        mode::full_process_file::<Query, $t>(&Query, f.path(), &range, None, None)
-                            .unwrap()
-                            .unwrap();
+                        mode::full_process_file::<Query, $t>(
+                            &Query,
+                            f.path(),
+                            &range,
+                            None,
+                            None,
+                            not_cancelled(),
+                        )
+                        .unwrap()
+                        .unwrap();
                     assert_eq!(result.pages_in_core_before, result.pages_in_core_after);
                     assert!(result.residency_before.is_none());
                     assert!(result.residency_after.is_some());
@@ -334,9 +390,14 @@ mod tests {
                         offset: 0,
                         max_len: None,
                     };
-                    let result = mode::counts_process_file::<Query, $t>(&Query, f.path(), &range)
-                        .unwrap()
-                        .unwrap();
+                    let result = mode::counts_process_file::<Query, $t>(
+                        &Query,
+                        f.path(),
+                        &range,
+                        not_cancelled(),
+                    )
+                    .unwrap()
+                    .unwrap();
                     assert_eq!(result.total_pages, 4);
                 }
 
@@ -351,6 +412,7 @@ mod tests {
                             &Query,
                             std::path::Path::new("/nonexistent/file.dat"),
                             &range,
+                            not_cancelled(),
                         );
                     assert!(result.is_err());
                 }
@@ -435,10 +497,14 @@ mod tests {
             max_len: None,
         };
 
-        let result =
-            mode::counts_process_file::<AdvisoryNoop, Vec<bool>>(&AdvisoryNoop, f.path(), &range)
-                .unwrap()
-                .unwrap();
+        let result = mode::counts_process_file::<AdvisoryNoop, Vec<bool>>(
+            &AdvisoryNoop,
+            f.path(),
+            &range,
+            not_cancelled(),
+        )
+        .unwrap()
+        .unwrap();
 
         assert!(result.pages_in_core_before > 0);
         assert_eq!(

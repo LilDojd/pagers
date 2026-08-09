@@ -13,6 +13,7 @@ use std::sync::atomic::AtomicUsize;
 use memmap2::Mmap;
 
 use crate::mincore::{DefaultPageMap, PageMap};
+use crate::Cancellation;
 
 pub use evict::Evict;
 pub use lock::{Lock, LockedFile};
@@ -75,11 +76,21 @@ pub trait Op: Sync {
 
 pub struct FileContext<'a, PM: PageMap = DefaultPageMap> {
     prepared: PreparedFile,
+    cancellation: Cancellation<'a>,
     on_progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
     residency: Option<&'a PM>,
 }
 
 impl<'a, PM: PageMap> FileContext<'a, PM> {
+    pub(crate) fn new(prepared: PreparedFile, cancellation: Cancellation<'a>) -> Self {
+        Self {
+            prepared,
+            cancellation,
+            on_progress: None,
+            residency: None,
+        }
+    }
+
     pub(crate) fn with_progress(
         mut self,
         on_progress: Option<&'a (dyn Fn(usize, usize) + Sync)>,
@@ -134,15 +145,9 @@ impl<'a, PM: PageMap> FileContext<'a, PM> {
             on_progress(pages_walked, action_count);
         }
     }
-}
 
-impl<'a, PM: PageMap> From<PreparedFile> for FileContext<'a, PM> {
-    fn from(prepared: PreparedFile) -> Self {
-        Self {
-            prepared,
-            on_progress: None,
-            residency: None,
-        }
+    pub fn check_cancelled(&self) -> crate::Result<()> {
+        self.cancellation.check()
     }
 }
 
@@ -250,8 +255,11 @@ impl Stats {
 mod tests {
     use std::io::Write;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    use super::{FileContext, FileRange, ResidencyEffect, prepare_file};
+    use crate::Cancellation;
+
+    use super::{FileContext, FileRange, Op, ResidencyEffect, Touch, prepare_file};
 
     #[test]
     fn residency_effect_derives_sign_and_delta() {
@@ -280,11 +288,34 @@ mod tests {
         .unwrap()
         .unwrap();
         let mmap = Arc::clone(&prepared.mmap);
+        let cancelled = AtomicBool::new(false);
 
-        let context: FileContext<'_, Vec<bool>> = prepared.into();
+        let context: FileContext<'_, Vec<bool>> =
+            FileContext::new(prepared, Cancellation::new(&cancelled));
 
         assert_eq!(context.len(), mmap.len());
         assert_eq!(context.path(), file.path());
         assert_eq!(context.total_pages(), 1);
+    }
+
+    #[test]
+    fn touch_stops_when_cancelled_during_page_walk() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&vec![0; *crate::pagesize::PAGE_SIZE * 512])
+            .unwrap();
+        let prepared = prepare_file(file.path(), &FileRange::full())
+            .unwrap()
+            .unwrap();
+        let cancelled = AtomicBool::new(false);
+        let cancel_after_progress = |_: usize, _: usize| {
+            cancelled.store(true, Ordering::Relaxed);
+        };
+        let context: FileContext<'_, Vec<bool>> =
+            FileContext::new(prepared, Cancellation::new(&cancelled))
+                .with_progress(Some(&cancel_after_progress));
+
+        let result = Touch.execute(&context);
+
+        assert!(matches!(result, Err(crate::Error::Cancelled)));
     }
 }

@@ -8,6 +8,7 @@ use crate::mincore::PageMap;
 use crate::mode::DisplayMode;
 use crate::ops::{FileRange, Op, Stats};
 use crate::par::{InodeSet, SeenInodes as _};
+use crate::Cancellation;
 
 #[cfg(feature = "rayon")]
 pub use crate::par::Threads;
@@ -34,7 +35,9 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     range: &FileRange,
     stats: &Stats,
     display: &D,
+    cancellation: Cancellation<'_>,
 ) -> crate::Result<Vec<O::Output>> {
+    cancellation.check()?;
     tracing::info!("starting {} on {} path(s)", O::LABEL, paths.len());
     validate_patterns(crawl_config)?;
     let seen_inodes = InodeSet::default();
@@ -52,8 +55,10 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
 
         let outputs = if pool.current_num_threads() == 1 {
             let mut outputs = Vec::new();
-            collect_paths(paths, crawl_config, &seen_inodes, stats, |path| {
-                if let Some(output) = display.process_one::<O>(op, &path, range, stats) {
+            collect_paths(paths, crawl_config, &seen_inodes, stats, cancellation, |path| {
+                if let Some(output) =
+                    display.process_one::<O>(op, &path, range, stats, cancellation)
+                {
                     outputs.push(output);
                 }
             });
@@ -64,15 +69,24 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
                     s.spawn({
                         let tx = tx;
                         move |_| {
-                            collect_paths(paths, crawl_config, &seen_inodes, stats, |p| {
-                                let _ = tx.send(p);
-                            });
+                            collect_paths(
+                                paths,
+                                crawl_config,
+                                &seen_inodes,
+                                stats,
+                                cancellation,
+                                |p| {
+                                    let _ = tx.send(p);
+                                },
+                            );
                         }
                     });
 
                     rx.into_iter()
                         .par_bridge()
-                        .filter_map(|path| display.process_one::<O>(op, &path, range, stats))
+                        .filter_map(|path| {
+                            display.process_one::<O>(op, &path, range, stats, cancellation)
+                        })
                         .collect::<Vec<_>>()
                 })
             })
@@ -91,13 +105,22 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     #[cfg(not(feature = "rayon"))]
     {
         let mut file_paths = Vec::new();
-        collect_paths(paths, crawl_config, &seen_inodes, stats, |p| {
-            file_paths.push(p);
-        });
+        collect_paths(
+            paths,
+            crawl_config,
+            &seen_inodes,
+            stats,
+            cancellation,
+            |p| {
+                file_paths.push(p);
+            },
+        );
         tracing::info!("discovered {} files", file_paths.len());
         let outputs = file_paths
             .iter()
-            .filter_map(|path| display.process_one::<O>(op, path, range, stats))
+            .filter_map(|path| {
+                display.process_one::<O>(op, path, range, stats, cancellation)
+            })
             .collect();
         display.finish();
         op.finish()?;
@@ -119,8 +142,12 @@ fn collect_paths(
     crawl_config: &CrawlConfig,
     seen_inodes: &InodeSet,
     stats: &Stats,
+    cancellation: Cancellation<'_>,
     mut emit: impl FnMut(PathBuf),
 ) {
+    if cancellation.is_cancelled() {
+        return;
+    }
     let mut all_paths: Vec<PathBuf> = paths.to_vec();
 
     if let Some(batch_path) = &crawl_config.batch {
@@ -133,10 +160,20 @@ fn collect_paths(
     let needs_meta = crawl_config.max_file_size.is_some() || !crawl_config.count_hardlinks;
 
     for path in &all_paths {
+        if cancellation.is_cancelled() {
+            break;
+        }
         if path.is_dir() {
             tracing::info!("crawling directory {}", path.display());
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
-            walk_dir_entries(path, crawl_config, needs_meta, seen_inodes, &mut emit);
+            walk_dir_entries(
+                path,
+                crawl_config,
+                needs_meta,
+                seen_inodes,
+                cancellation,
+                &mut emit,
+            );
         } else if path.is_file() {
             if explicit_file_allowed(path, crawl_config, needs_meta, seen_inodes) {
                 emit(path.clone());
@@ -152,6 +189,7 @@ fn walk_dir_entries(
     config: &CrawlConfig,
     needs_meta: bool,
     seen_inodes: &InodeSet,
+    cancellation: Cancellation<'_>,
     mut emit: impl FnMut(PathBuf),
 ) {
     let mut builder = WalkBuilder::new(root);
@@ -170,6 +208,9 @@ fn walk_dir_entries(
     }
 
     for entry in builder.build() {
+        if cancellation.is_cancelled() {
+            break;
+        }
         let Ok(entry) = entry.inspect_err(|e| tracing::warn!("{e}")) else {
             continue;
         };
@@ -279,4 +320,44 @@ pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>
             Err(e) => Some(Err(e)),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+    use crate::Cancellation;
+
+    #[test]
+    fn cancelled_collection_emits_no_paths() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let config = CrawlConfig {
+            follow_symlinks: false,
+            single_filesystem: false,
+            count_hardlinks: true,
+            ignore_patterns: Vec::new(),
+            filter_patterns: Vec::new(),
+            max_file_size: None,
+            batch: None,
+            nul_delim: false,
+            #[cfg(feature = "rayon")]
+            threads: Threads::default(),
+        };
+        let seen_inodes = InodeSet::default();
+        let stats = Stats::new();
+        let cancelled = AtomicBool::new(true);
+        let mut emitted = Vec::new();
+
+        collect_paths(
+            &[file.path().to_owned()],
+            &config,
+            &seen_inodes,
+            &stats,
+            Cancellation::new(&cancelled),
+            |path| emitted.push(path),
+        );
+
+        assert!(emitted.is_empty());
+    }
 }

@@ -1,4 +1,5 @@
 pub mod cachestat;
+mod cancel;
 pub mod crawl;
 pub mod error;
 pub mod events;
@@ -10,4 +11,5 @@ pub mod output;
 pub mod pagesize;
 mod par;
 
+pub use cancel::Cancellation;
 pub use error::{Error, Result};

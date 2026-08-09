@@ -29,6 +29,9 @@ pub enum MlockError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("operation cancelled")]
+    Cancelled,
+
     #[error("{context}: {source}")]
     Io {
         context: String,
