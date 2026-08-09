@@ -78,8 +78,6 @@ fn test_daemon_wait_reports_processing_failure() {
             "--wait",
             "-p",
             "1M..",
-            "-o",
-            "kv",
             file.path().to_str().unwrap(),
         ])
         .output()
@@ -527,7 +525,7 @@ fn test_query_empty_file() {
 #[test]
 fn test_query_nonexistent_file() {
     let output = pagers_bin()
-        .args(["query", "-o", "human", "/nonexistent/path/file.dat"])
+        .args(["query", "/nonexistent/path/file.dat"])
         .output()
         .unwrap();
 

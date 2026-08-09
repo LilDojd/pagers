@@ -48,7 +48,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(Error::DaemonExit(code)) => ExitCode::from(code),
         Err(e) => {
-            ::tracing::error!("{e}");
+            eprintln!("{e}");
             ExitCode::FAILURE
         }
     }

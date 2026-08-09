@@ -70,7 +70,7 @@ where
             let (stats, _locks, _) = match run_cli_with_setup::<O, PM>(op, setup, cancellation) {
                 Ok(result) => result,
                 Err(error) => {
-                    tracing::error!("{error}");
+                    eprintln!("{error}");
                     daemon::notify_and_redirect(notify_fd, 1);
                     return Err(error);
                 }
