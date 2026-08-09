@@ -66,7 +66,8 @@ where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
-        let (stats, _, elapsed) = run_cli::<O, PM>(&self.op, self.common, self.cancellation)?;
+        let (stats, _outputs, elapsed) =
+            run_cli::<O, PM>(&self.op, self.common, self.cancellation)?;
         if !self.quiet {
             print_summary::<O>(&stats, elapsed, self.format.unwrap_or_default());
         }

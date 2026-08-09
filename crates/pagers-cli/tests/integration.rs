@@ -113,6 +113,42 @@ fn test_daemon_wait_closes_captured_stdio() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn test_foreground_lock_retains_locked_mapping() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("lock.dat");
+    fs_err::write(&file, vec![0u8; 4096]).unwrap();
+
+    let mut child = pagers_bin()
+        .args(["lock", "-o", "kv", file.to_str().unwrap()])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let status_path = format!("/proc/{}/status", child.id());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let locked = loop {
+        if let Ok(status) = fs_err::read_to_string(&status_path)
+            && let Some(kib) = status
+                .lines()
+                .find_map(|line| line.strip_prefix("VmLck:"))
+                .and_then(|value| value.split_whitespace().next())
+                .and_then(|value| value.parse::<usize>().ok())
+            && kib > 0
+        {
+            break true;
+        }
+        if child.try_wait().unwrap().is_some() || std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(locked, "foreground lock process did not retain any locked memory");
+}
+
 #[test]
 fn test_query_single_thread_completes() {
     let dir = tempfile::tempdir().unwrap();
