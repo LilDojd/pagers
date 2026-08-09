@@ -101,7 +101,8 @@ PATHS              Files or directories to process
 -I, --filter GLOB  Only process files matching pattern (repeatable)
 -b, --batch FILE   Read paths from FILE (- for stdin)
 -0                 NUL-delimited paths in batch mode
--o, --output FMT   Output format: human (default), kv, json
+-j, --threads N    Number of worker threads (0 = all cores)
+-o, --output FMT   Output format: human, kv, json (omit on a TTY for the TUI)
 -v                 Increase verbosity (repeatable)
 -q                 Quiet (no output)
 ```
@@ -120,15 +121,15 @@ Sizes accept decimal and binary units: `4k`, `100M`, `1.5G`, `2KiB`, `8MiB`. Sci
 
 ## How it works
 
-**`query`** uses the `cachestat(2)` syscall on Linux 6.5+ for single-syscall cache stats per file, falling back to `mincore(2)` on older kernels and on macOS. Returns per-file page residency maps and aggregate statistics.
+**`query`** uses the `cachestat(2)` syscall on Linux 6.5+ for single-syscall cache stats per file, falling back to `mincore(2)` on older kernels and on macOS. The TUI renders per-file residency maps; CLI modes emit aggregate statistics.
 
-**`touch`** issues `posix_fadvise(POSIX_FADV_SEQUENTIAL | POSIX_FADV_WILLNEED)` to kick off kernel readahead, then walks every page with volatile reads to guarantee residency. Pages already loaded by the kernel are instant cache hits; the rest trigger demand faults.
+**`touch`** issues separate `posix_fadvise(POSIX_FADV_SEQUENTIAL)` and `posix_fadvise(POSIX_FADV_WILLNEED)` calls on Linux, then walks every missing page with volatile reads to guarantee residency. macOS uses `madvise(MADV_WILLNEED)` before the page walk.
 
 **`evict`** calls `posix_fadvise(POSIX_FADV_DONTNEED)` on Linux and `msync(MS_INVALIDATE)` on macOS to advise the kernel to drop cached pages.
 
 **`lock`** touches pages into cache and then calls `mlock(2)` to wire them into physical memory. **`lockall`** additionally calls `mlockall(MCL_CURRENT)` after locking individual files.
 
-Files are traversed in parallel using [rayon](https://github.com/rayon-rs/rayon). Memory-mapped I/O is handled by [memmap2](https://github.com/RazrFalcon/memmap2-rs). The live TUI is built with [ratatui](https://github.com/ratatui/ratatui).
+Directories are traversed in parallel using [dua-core](https://crates.io/crates/dua-core), and file operations run on a bounded set of standard-library worker threads. Memory-mapped I/O is handled by [memmap2](https://github.com/RazrFalcon/memmap2-rs). The live TUI uses `ratatui-core` and `ratatui-crossterm`.
 
 ## Use cases
 
@@ -145,38 +146,25 @@ Files are traversed in parallel using [rayon](https://github.com/rayon-rs/rayon)
 | | vmtouch | pagers |
 |-|---------|--------|
 | Language | C | Rust |
-| Platforms | Linux, FreeBSD, Solaris, macOS, HP-UX, OpenBSD | Linux, macOS\* |
+| Platforms | Linux, FreeBSD, Solaris, macOS, HP-UX, OpenBSD | Linux, macOS |
 | Cache query | `mincore(2)` | `cachestat(2)` on Linux 6.5+, `mincore(2)` fallback |
 | Live TUI | Sort of | Yes |
 | Daemon mode | `-d` (requires `-l`/`-L`) | `-d` for `lock` and `lockall` |
-| Parallel traversal | No | Yes (rayon) |
+| Parallel traversal and file processing | No | Yes (`dua-core` + worker threads) |
 | Range operations | `-p` page ranges | `-p` byte ranges with unit suffixes |
 
 ### Performance
 
-#### macOS (M1)
+Current measurements use vmtouch 1.3.1 and release builds on Linux 7.1.6.
 
-Query and evict perform on par with vmtouch. Touch is **2–6x faster** thanks to parallel traversal:
-
-| Benchmark | vmtouch | pagers | Speedup |
-|-----------|---------|--------|---------|
-| Query 10 GiB file | 178 ms | 178 ms | 1.0x |
-| Evict 10 GiB file | 207 ms | 208 ms | 1.0x |
-| Touch 10 GiB file | 14.0 s | 5.1 s | **2.7x** |
-| Touch 1000 × 1 MiB files | 1.51 s | 239 ms | **6.3x** |
-| Evict 1000 × 1 MiB files | 49.7 ms | 18.9 ms | **2.6x** |
-
-#### Linux (x86_64, kernel 6.19)
-
-Query is **2–10x faster** thanks to `cachestat(2)`. Touch is **~2x faster** on directory trees via parallel traversal:
-
-| Benchmark | vmtouch | pagers | Speedup |
-|-----------|---------|--------|---------|
-| Query 10 GiB cached | 42 ms | 18 ms | **2.3x** |
-| Query 10 GiB uncached | 16 ms | 1.5 ms | **10.6x** |
-| Evict 10 GiB file | 1.15 s | 1.16 s | 1.0x |
-| Touch 10 GiB file | 1.16 s | 1.19 s | 1.0x |
-| Touch 1000 × 1 MiB files | 173 ms | 90 ms | **1.9x** |
+| Benchmark | vmtouch | pagers | pagers speedup |
+|-----------|---------|--------|-----------------|
+| Query 10 GiB cached | 45.8 ms | 16.0 ms | **2.87x** |
+| Query 10 GiB uncached | 14.8 ms | 0.825 ms | **17.94x** |
+| Evict 10 GiB cached | **1.184 s** | 1.257 s | 0.94x |
+| Touch 10 GiB uncached | 1.803 s | **1.720 s** | 1.05x |
+| Touch 1,000 x 1 MiB uncached files | 393.5 ms | **170.1 ms** | **2.31x** |
+| Evict 1,000 x 1 MiB cached files | **135.3 ms** | 186.7 ms | 0.72x |
 
 ## See also
 
