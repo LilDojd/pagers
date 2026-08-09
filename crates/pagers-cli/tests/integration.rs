@@ -74,6 +74,53 @@ fn test_daemon_validates_patterns_before_forking() {
     assert!(stderr.contains("invalid path pattern"), "stderr: {stderr}");
 }
 
+#[cfg(unix)]
+#[test]
+fn test_daemon_wait_closes_captured_stdio() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("lock.dat");
+    let pidfile = dir.path().join("pagers.pid");
+    fs_err::write(&file, vec![0u8; 4096]).unwrap();
+
+    let child = pagers_bin()
+        .args([
+            "lock",
+            "--daemon",
+            "--wait",
+            "--pidfile",
+            pidfile.to_str().unwrap(),
+            "-o",
+            "kv",
+            file.to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || tx.send(child.wait_with_output()).unwrap());
+
+    let result = rx.recv_timeout(std::time::Duration::from_secs(5));
+    let pid = fs_err::read_to_string(&pidfile).unwrap_or_default();
+    if !pid.trim().is_empty() {
+        let _ = Command::new("kill").args(["-TERM", pid.trim()]).status();
+    }
+
+    let output = match result {
+        Ok(output) => output.unwrap(),
+        Err(_) => {
+            let _ = waiter.join();
+            panic!("daemon kept captured standard descriptors open after readiness");
+        }
+    };
+    waiter.join().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[cfg(feature = "rayon")]
 #[test]
 fn test_query_single_thread_completes() {

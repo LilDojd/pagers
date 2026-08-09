@@ -87,6 +87,8 @@ pub(crate) fn hold(
         use std::io::Write;
         let mut file = std::fs::File::from(fd);
         let _ = file.write_all(&[0u8]);
+        drop(file);
+        redirect_stdio();
     }
 
     while !term.load(std::sync::atomic::Ordering::Relaxed) {
