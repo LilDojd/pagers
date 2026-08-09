@@ -48,6 +48,9 @@ pub enum Error {
     #[error("{0}")]
     ThreadPool(#[from] rayon::ThreadPoolBuildError),
 
+    #[error("invalid path pattern: {0}")]
+    PathPattern(#[from] ignore::Error),
+
     #[error("{path}: offset {offset} beyond file size {file_len}")]
     OffsetBeyondFile {
         path: PathBuf,

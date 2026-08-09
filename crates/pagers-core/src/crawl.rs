@@ -36,6 +36,8 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
     display: &D,
 ) -> crate::Result<Vec<O::Output>> {
     tracing::info!("starting {} on {} path(s)", O::LABEL, paths.len());
+    // ugly but yeah
+    let _ = build_overrides(Path::new("."), crawl_config);
     let seen_inodes = InodeSet::default();
 
     #[cfg(feature = "rayon")]
@@ -146,17 +148,10 @@ fn walk_dir_entries(
         .git_global(false)
         .git_exclude(false);
 
-    if !config.ignore_patterns.is_empty() || !config.filter_patterns.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(root);
-        for pat in &config.ignore_patterns {
-            let _ = overrides.add(&format!("!{pat}"));
-        }
-        for pat in &config.filter_patterns {
-            let _ = overrides.add(pat);
-        }
-        if let Ok(ov) = overrides.build() {
-            builder.overrides(ov);
-        }
+    if let Some(overrides) =
+        build_overrides(root, config).expect("path patterns were validated before traversal")
+    {
+        builder.overrides(overrides);
     }
 
     for entry in builder.build() {
@@ -201,6 +196,24 @@ fn walk_dir_entries(
 
         emit(entry_path.to_path_buf());
     }
+}
+
+fn build_overrides(
+    root: &Path,
+    config: &CrawlConfig,
+) -> crate::Result<Option<ignore::overrides::Override>> {
+    if config.ignore_patterns.is_empty() && config.filter_patterns.is_empty() {
+        return Ok(None);
+    }
+
+    let mut overrides = ignore::overrides::OverrideBuilder::new(root);
+    for pattern in &config.ignore_patterns {
+        overrides.add(&format!("!{pattern}"))?;
+    }
+    for pattern in &config.filter_patterns {
+        overrides.add(pattern)?;
+    }
+    Ok(Some(overrides.build()?))
 }
 
 pub fn read_batch_paths(path: &Path, nul_delim: bool) -> io::Result<Vec<PathBuf>> {
