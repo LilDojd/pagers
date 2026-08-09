@@ -1,0 +1,14 @@
+[workspace]
+changelog_update = false
+git_release_enable = false
+git_tag_enable = false
+release_always = false
+
+[[package]]
+name = "pagers"
+changelog_include = ["pagers-core", "pagers-tui"]
+changelog_path = "./CHANGELOG.md"
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"

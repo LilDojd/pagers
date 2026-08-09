@@ -1,9 +1,28 @@
 # Creating a Release
 
-[GitHub](https://github.com/LilDojd/pagers/releases) and [FlakeHub](https://flakehub.com/flake/LilDojd/pagers) releases are automated via [GitHub Actions](./.github/workflows/release.yml) and triggered by pushing a tag.
+Releases are automated by release-plz.
 
-1. Run the [release script](./release.sh): `./release.sh v[X.Y.Z]`
-1. Push the changes: `jj git push -b main`
-1. Check if [CI](https://github.com/LilDojd/pagers/actions) workflow completes successfully.
-1. Push the tag: `git push origin v[X.Y.Z]`
-1. Wait for [Release](https://github.com/LilDojd/pagers/actions) workflow to finish.
+1. Merge normal changes into `main`.
+1. Review and merge the release-plz release PR.
+1. Wait for the Release-plz workflow to publish the crates and create the GitHub release.
+1. Wait for the Release workflow to attach archives and publish to FlakeHub.
+
+The repository requires these secrets:
+
+- `RELEASE_APP_ID`: ID of a GitHub App with contents and pull-request write access.
+- `RELEASE_APP_PRIVATE_KEY`: private key for that GitHub App.
+- `CARGO_TOKEN`: crates.io publishing token.
+
+Rerun Release-plz after a crates.io failure while `pagers` is not published at the workspace version.
+
+If `pagers` is published but its tag or GitHub release is missing, do not rerun Release-plz. Find the exact source commit that release-plz published. For a merge commit, use the release PR's last commit, not the merge commit. For a squash merge, use the resulting commit on `main`. Then run:
+
+```bash
+VERSION=X.Y.Z
+RELEASE_COMMIT=full-published-source-SHA
+gh release create "v${VERSION}" --target "$RELEASE_COMMIT" --title "v${VERSION}" --generate-notes
+```
+
+This creates a missing tag at the release commit and publishes the GitHub release, which starts the Release workflow.
+
+Rerun Release after an archive or FlakeHub failure. `gh release upload --clobber` deletes an old asset before it uploads the replacement, so rerun the workflow after a partial failure. Confirm that the release contains archives for all five targets: `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-unknown-linux-gnu`, `armv7-unknown-linux-gnueabihf`, and `aarch64-apple-darwin`.

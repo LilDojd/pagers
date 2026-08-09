@@ -51,7 +51,6 @@
             gnupg
             cargo-flamegraph
             samply
-            git-cliff
             typos
             inputs.omnix.packages.${system}.default
           ]
