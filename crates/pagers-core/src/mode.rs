@@ -63,9 +63,8 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         cancellation: &Cancellation,
     ) -> crate::Result<Option<O::Output>> {
         let path_str: std::sync::Arc<str> = path.display().to_string().into();
-        let full_file = FileRange::full();
 
-        let pf = match prepare_file(path, &full_file)? {
+        let pf = match prepare_file(path, range)? {
             Some(pf) => pf,
             None => return Ok(None),
         };
@@ -84,9 +83,6 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             residency: residency.clone(),
         });
 
-        let prepared_pf = if range.is_full_file() { Some(pf) } else { None };
-
-        let page_offset = usize::try_from(range.offset())? / *crate::pagesize::PAGE_SIZE;
         let reported_action = std::sync::atomic::AtomicUsize::new(0);
         let on_progress = |pages_walked: usize, action_count: usize| {
             let action = action_count;
@@ -95,20 +91,20 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             if let Some(resident) = O::EFFECT.progress_resident() {
                 self.sink.send(Event::FileProgress {
                     path: path_str.clone(),
-                    page_offset,
+                    page_offset: 0,
                     pages_walked,
                     resident,
                 });
             }
         };
 
-        let prepared_full = prepared_pf.map(|pf| (pf, residency, pages_in_core));
+        let prepared = Some((pf, residency, pages_in_core));
         let processed = full_process_file::<O, PM>(
             op,
             path,
             range,
             Some(&on_progress),
-            prepared_full,
+            prepared,
             cancellation,
         );
         let result = match processed {
@@ -138,7 +134,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         if O::EFFECT.has_action()
             && let Some(residency_after) = result.residency_after.as_ref()
         {
-            self.send_residency(&path_str, page_offset, residency_after);
+            self.send_residency(&path_str, 0, residency_after);
         }
 
         self.sink.send(Event::FileDone { path: path_str });
@@ -311,4 +307,36 @@ fn counts_page_count<PM: PageMap>(
     }
     let residency: PM = crate::mincore::residency(mmap, len)?;
     Ok(residency.count_filled())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tui_reports_only_the_requested_range() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let page_size = *crate::pagesize::PAGE_SIZE;
+        file.as_file().set_len((page_size * 3) as u64).unwrap();
+        let range = FileRange::new(page_size as u64, Some(page_size as u64)).unwrap();
+        let stats = Stats::new();
+        let cancellation = Cancellation::new();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let tui = Tui::<DefaultPageMap>::new(sender);
+
+        tui.process_one(&ops::Query, file.path(), &range, &stats, &cancellation)
+            .unwrap();
+
+        let Event::FileStart {
+            total_pages,
+            residency,
+            ..
+        } = receiver.recv().unwrap()
+        else {
+            panic!("expected file start event");
+        };
+        assert_eq!(total_pages, 1);
+        assert_eq!(residency.len(), 1);
+        assert_eq!(stats.total_pages.load(Ordering::Relaxed), 1);
+    }
 }

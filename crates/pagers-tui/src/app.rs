@@ -73,6 +73,7 @@ impl<PM: PageMap> App<PM> {
             TuiEvent::Core(CoreEvent::FileDone { path }) => {
                 if let Some(&idx) = self.file_index.get(&path) {
                     self.files[idx].done = true;
+                    self.trim_completed();
                 }
                 ControlFlow::Continue
             }
@@ -113,6 +114,33 @@ impl<PM: PageMap> App<PM> {
         let mut files = self.files;
         files.sort_by(|a, b| a.ratio().total_cmp(&b.ratio()));
         files
+    }
+
+    fn trim_completed(&mut self) {
+        if self.files.iter().filter(|file| file.done).count()
+            <= crate::MAX_DISPLAY_FILES as usize
+        {
+            return;
+        }
+        let remove = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, file)| file.done)
+            .min_by(|(_, a), (_, b)| {
+                a.total_pages
+                    .cmp(&b.total_pages)
+                    .then_with(|| b.path.cmp(&a.path))
+            })
+            .map(|(index, _)| index)
+            .expect("at least one completed file");
+        self.files.remove(remove);
+        self.file_index = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| (Arc::clone(&file.path), index))
+            .collect();
     }
 }
 
@@ -163,6 +191,24 @@ mod tests {
             path: "/a.bin".into(),
         }));
         assert!(app.files()[0].done);
+    }
+
+    #[test]
+    fn test_completed_files_are_bounded() {
+        let mut app = App::new();
+        for total_pages in 0..10 {
+            let path: Arc<str> = format!("/{total_pages}.bin").into();
+            app.handle_event(TuiEvent::Core(CoreEvent::FileStart {
+                path: path.clone(),
+                total_pages,
+                residency: bitvec::bitvec![0; total_pages],
+            }));
+            app.handle_event(TuiEvent::Core(CoreEvent::FileDone { path }));
+        }
+
+        let files = app.visible_files(usize::MAX);
+        assert_eq!(files.len(), crate::MAX_DISPLAY_FILES as usize);
+        assert_eq!(files.last().unwrap().total_pages, 2);
     }
 
     #[test]

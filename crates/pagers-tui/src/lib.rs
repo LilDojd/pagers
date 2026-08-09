@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
 use pagers_core::Cancellation;
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::mincore::PageMap;
@@ -35,7 +34,7 @@ struct TerminalGuard {
 struct TerminalStateGuard;
 
 impl TerminalStateGuard {
-    fn new() -> Result<Self> {
+    fn new() -> io::Result<Self> {
         crossterm::terminal::enable_raw_mode()?;
         Ok(Self)
     }
@@ -49,7 +48,7 @@ impl Drop for TerminalStateGuard {
 }
 
 impl TerminalGuard {
-    fn new(viewport_height: u16) -> Result<Self> {
+    fn new(viewport_height: u16) -> io::Result<Self> {
         let state = TerminalStateGuard::new()?;
         crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
         let backend = CrosstermBackend::new(io::stdout());
@@ -117,9 +116,7 @@ pub fn run<PM: PageMap + Send + 'static>(
     label: &str,
     action_sign: isize,
     start: Instant,
-) -> Result<()> {
-    color_eyre::install()?;
-
+) -> io::Result<()> {
     let viewport_height = MAX_DISPLAY_FILES + stats::SUMMARY_LINES;
     let mut guard = TerminalGuard::new(viewport_height)?;
 

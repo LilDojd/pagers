@@ -27,6 +27,10 @@ pub(crate) enum Error {
     DaemonShutdown,
     #[error("daemon child exited with status {0}")]
     DaemonExit(u8),
+    #[error("TUI: {0}")]
+    Tui(#[source] std::io::Error),
+    #[error("TUI worker thread panicked")]
+    TuiPanic,
     #[error("{0}")]
     Nix(#[from] nix::errno::Errno),
     #[error("{0}")]

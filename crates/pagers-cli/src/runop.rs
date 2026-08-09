@@ -197,16 +197,14 @@ where
     let tui_label = O::LABEL.to_string();
     let action_sign = O::EFFECT.action_sign();
     let tui_handle = std::thread::spawn(move || {
-        if let Err(e) = pagers_tui::run(
+        pagers_tui::run(
             rx,
             tui_cancellation,
             stats_clone,
             &tui_label,
             action_sign,
             start,
-        ) {
-            ::tracing::error!("TUI error: {e}");
-        }
+        )
     });
 
     let outputs = crawl::crawl_and_process::<O, PM, _>(
@@ -219,7 +217,10 @@ where
         cancellation,
     );
 
-    tui_handle.join().expect("TUI thread panicked");
+    tui_handle
+        .join()
+        .map_err(|_| Error::TuiPanic)?
+        .map_err(Error::Tui)?;
 
     let elapsed = start.elapsed().as_secs_f64();
     Ok((stats, outputs?, elapsed))

@@ -15,7 +15,6 @@ default = ["bitvec"]
 bitvec = ["pagers-core/bitvec"]
 
 [dependencies]
-color-eyre = "0.6"
 pagers-core = { workspace = true, default-features = false }
 ratatui-core = { version = "0.1.2", features = ["layout-cache", "std"] }
 ratatui-crossterm = { version = "0.1.2", features = ["crossterm_0_29"] }
