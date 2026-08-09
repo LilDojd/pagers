@@ -110,11 +110,11 @@ impl<'a, PM: PageMap> FileContext<'a, PM> {
     }
 
     pub fn offset(&self) -> u64 {
-        self.prepared.offset
+        self.prepared.offset()
     }
 
     pub fn len(&self) -> usize {
-        self.prepared.mmap.len()
+        self.prepared.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -122,7 +122,7 @@ impl<'a, PM: PageMap> FileContext<'a, PM> {
     }
 
     pub fn total_pages(&self) -> usize {
-        self.prepared.total_pages
+        self.prepared.total_pages()
     }
 
     pub fn residency(&self) -> Option<&PM> {
@@ -159,13 +159,56 @@ impl<PM: PageMap> std::fmt::Debug for FileContext<'_, PM> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileRange {
-    pub offset: u64,
-    pub max_len: Option<u64>,
+    offset: u64,
+    max_len: Option<u64>,
 }
 
 impl FileRange {
+    pub fn full() -> Self {
+        Self {
+            offset: 0,
+            max_len: None,
+        }
+    }
+
+    pub fn new(offset: u64, max_len: Option<u64>) -> crate::Result<Self> {
+        let range = Self { offset, max_len };
+        range.validate()?;
+        Ok(range)
+    }
+
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn max_len(&self) -> Option<u64> {
+        self.max_len
+    }
+
     pub fn is_full_file(&self) -> bool {
         self.offset == 0 && self.max_len.is_none()
+    }
+
+    pub(crate) fn validate(&self) -> crate::Result<()> {
+        let page_size = *crate::pagesize::PAGE_SIZE as u64;
+        if !self.offset.is_multiple_of(page_size) {
+            return Err(crate::Error::UnalignedRange {
+                offset: self.offset,
+                page_size,
+            });
+        }
+        if self.max_len == Some(0) {
+            return Err(crate::Error::EmptyRange);
+        }
+        if let Some(max_len) = self.max_len
+            && self.offset.checked_add(max_len).is_none()
+        {
+            return Err(crate::Error::RangeOverflow {
+                offset: self.offset,
+                max_len,
+            });
+        }
+        Ok(())
     }
 }
 

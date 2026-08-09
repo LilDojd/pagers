@@ -113,7 +113,7 @@ fn common_setup(
         (0, None)
     };
 
-    let range = ops::FileRange { offset, max_len };
+    let range = ops::FileRange::new(offset, max_len)?;
 
     let stdin_is_batch = common
         .batch

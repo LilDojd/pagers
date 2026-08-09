@@ -60,10 +60,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
         stats: &Stats,
     ) -> Option<O::Output> {
         let path_str: std::sync::Arc<str> = path.display().to_string().into();
-        let full_file = FileRange {
-            offset: 0,
-            max_len: None,
-        };
+        let full_file = FileRange::full();
 
         let pf = match prepare_file(path, &full_file) {
             Ok(Some(pf)) => pf,
@@ -73,7 +70,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
                 return None;
             }
         };
-        let residency: PM = match crate::mincore::residency(&pf.mmap, pf.len) {
+        let residency: PM = match crate::mincore::residency(&pf.mmap, pf.len()) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("{}: {e}", path.display());
@@ -81,7 +78,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
             }
         };
         let pages_in_core = residency.count_filled();
-        let total_pages = pf.total_pages;
+        let total_pages = pf.total_pages();
 
         stats.total_files.fetch_add(1, Ordering::Relaxed);
         stats.total_pages.fetch_add(total_pages, Ordering::Relaxed);
@@ -96,7 +93,7 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
 
         let prepared_pf = if range.is_full_file() { Some(pf) } else { None };
 
-        let page_offset = range.offset as usize / *crate::pagesize::PAGE_SIZE;
+        let page_offset = usize::try_from(range.offset()).ok()? / *crate::pagesize::PAGE_SIZE;
         let reported_action = std::sync::atomic::AtomicUsize::new(0);
         let on_progress = |pages_walked: usize, action_count: usize| {
             let action = action_count;
@@ -199,7 +196,7 @@ pub(crate) fn full_process_file<O: Op, PM: PageMap + Sync>(
             let Some(pf) = prepare_file(path, range)? else {
                 return Ok(None);
             };
-            let residency_before: PM = crate::mincore::residency(&pf.mmap, pf.len)?;
+            let residency_before: PM = crate::mincore::residency(&pf.mmap, pf.len())?;
             let pages_in_core_before = residency_before.count_filled();
             (pf, residency_before, pages_in_core_before)
         }
@@ -252,12 +249,12 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
     };
 
     let residency: Option<PM> = match O::EFFECT {
-        ResidencyEffect::Populate => Some(crate::mincore::residency(&pf.mmap, pf.len)?),
+        ResidencyEffect::Populate => Some(crate::mincore::residency(&pf.mmap, pf.len())?),
         ResidencyEffect::Preserve | ResidencyEffect::EvictAdvisory => None,
     };
     let pages_in_core_before = match residency.as_ref() {
         Some(residency) => residency.count_filled(),
-        None => counts_page_count::<PM>(&pf.file, &pf.mmap, pf.offset, pf.len)?,
+        None => counts_page_count::<PM>(&pf.file, &pf.mmap, pf.offset(), pf.len())?,
     };
 
     let ctx = FileContext::from(pf).with_residency(residency.as_ref());

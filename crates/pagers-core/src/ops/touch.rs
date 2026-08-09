@@ -73,7 +73,5 @@ fn initiate_readahead<PM: PageMap>(ctx: &FileContext<'_, PM>) {
         );
     }
 
-    let _ = ctx
-        .mmap()
-        .advise_range(Advice::WillNeed, offset as usize, len as usize);
+    let _ = ctx.mmap().advise_range(Advice::WillNeed, 0, len as usize);
 }

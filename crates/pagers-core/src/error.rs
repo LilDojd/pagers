@@ -57,6 +57,15 @@ pub enum Error {
         offset: u64,
         file_len: u64,
     },
+
+    #[error("range length must be greater than zero")]
+    EmptyRange,
+
+    #[error("range offset {offset} is not aligned to page size {page_size}")]
+    UnalignedRange { offset: u64, page_size: u64 },
+
+    #[error("range end overflows: offset {offset}, length {max_len}")]
+    RangeOverflow { offset: u64, max_len: u64 },
 }
 
 impl Error {

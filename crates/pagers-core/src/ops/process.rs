@@ -78,10 +78,52 @@ impl<O> FileProcessed for CountsResult<O> {
 pub(crate) struct PreparedFile {
     pub path: PathBuf,
     pub file: File,
-    pub offset: u64,
-    pub len: usize,
-    pub total_pages: usize,
     pub mmap: Arc<memmap2::Mmap>,
+    range: ResolvedRange,
+}
+
+impl PreparedFile {
+    pub(crate) fn offset(&self) -> u64 {
+        self.range.offset
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.range.len
+    }
+
+    pub(crate) fn total_pages(&self) -> usize {
+        self.range.len.div_ceil(*crate::pagesize::PAGE_SIZE)
+    }
+}
+
+struct ResolvedRange {
+    offset: u64,
+    len: usize,
+}
+
+impl ResolvedRange {
+    fn for_file(path: &Path, file_len: u64, range: &FileRange) -> crate::Result<Option<Self>> {
+        range.validate()?;
+        if file_len == 0 {
+            return Ok(None);
+        }
+
+        let offset = range.offset();
+        if offset >= file_len {
+            return Err(Error::OffsetBeyondFile {
+                path: path.to_path_buf(),
+                offset,
+                file_len,
+            });
+        }
+
+        let available = file_len - offset;
+        let len = range.max_len().unwrap_or(available).min(available);
+        Ok(Some(Self {
+            offset,
+            len: len.try_into()?,
+        }))
+    }
 }
 
 pub(crate) fn prepare_file(path: &Path, range: &FileRange) -> crate::Result<Option<PreparedFile>> {
@@ -90,23 +132,14 @@ pub(crate) fn prepare_file(path: &Path, range: &FileRange) -> crate::Result<Opti
     let file = fs_err::File::open(path).map_err(io_err)?;
     let file_len = file.metadata().map_err(io_err)?.len();
 
-    if file_len == 0 {
+    let Some(resolved) = ResolvedRange::for_file(path, file_len, range)? else {
         return Ok(None);
-    }
-
-    let (offset, len) =
-        effective_range(file_len, range).ok_or_else(|| Error::OffsetBeyondFile {
-            path: path.to_path_buf(),
-            offset: range.offset,
-            file_len,
-        })?;
-
-    let total_pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
+    };
 
     let mmap = Arc::new(unsafe {
         MmapOptions::new()
-            .offset(offset)
-            .len(len)
+            .offset(resolved.offset)
+            .len(resolved.len)
             .map(file.file())
             .map_err(io_err)?
     });
@@ -114,52 +147,21 @@ pub(crate) fn prepare_file(path: &Path, range: &FileRange) -> crate::Result<Opti
     Ok(Some(PreparedFile {
         path: path.to_path_buf(),
         file: file.into_file(),
-        offset,
-        len,
-        total_pages,
         mmap,
+        range: resolved,
     }))
-}
-
-fn effective_range(file_len: u64, range: &FileRange) -> Option<(u64, usize)> {
-    if file_len == 0 {
-        return None;
-    }
-    let offset = range.offset;
-    if offset >= file_len {
-        return None;
-    }
-    let len = match range.max_len {
-        Some(max) if (offset + max) < file_len => max as usize,
-        _ => (file_len - offset) as usize,
-    };
-    Some((offset, len))
 }
 
 pub fn file_info<PM: PageMap>(
     path: &Path,
     range: &FileRange,
 ) -> crate::Result<Option<FileInfo<PM>>> {
-    let io_err = |e| Error::io(path.display().to_string(), e);
-
-    let file = fs_err::File::open(path).map_err(io_err)?;
-    let file_len = file.metadata().map_err(io_err)?.len();
-
-    let Some((offset, len)) = effective_range(file_len, range) else {
+    let Some(prepared) = prepare_file(path, range)? else {
         return Ok(None);
     };
-
-    let total_pages = len.div_ceil(*crate::pagesize::PAGE_SIZE);
-    let mmap = unsafe {
-        MmapOptions::new()
-            .offset(offset)
-            .len(len)
-            .map(file.file())
-            .map_err(io_err)?
-    };
-    let residency: PM = crate::mincore::residency(&mmap, len)?;
+    let residency: PM = crate::mincore::residency(&prepared.mmap, prepared.len())?;
     Ok(Some(FileInfo {
-        total_pages,
+        total_pages: prepared.total_pages(),
         residency,
     }))
 }
@@ -230,7 +232,7 @@ mod tests {
                 fn offset_beyond_file() {
                     let (f, _) = create_temp_file(1);
                     let range = FileRange {
-                        offset: 1_000_000,
+                        offset: (*crate::pagesize::PAGE_SIZE * 100) as u64,
                         max_len: None,
                     };
                     let result: crate::Result<Option<CountsResult<()>>> =
@@ -381,6 +383,48 @@ mod tests {
         assert_eq!(stats.action_pages.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_files.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_dirs.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn zero_length_range_is_rejected() {
+        let (file, _) = create_temp_file(1);
+        let range = FileRange {
+            offset: 0,
+            max_len: Some(0),
+        };
+
+        assert!(matches!(
+            prepare_file(file.path(), &range),
+            Err(Error::EmptyRange)
+        ));
+    }
+
+    #[test]
+    fn unaligned_range_is_rejected() {
+        let (file, _) = create_temp_file(2);
+        let range = FileRange {
+            offset: 1,
+            max_len: Some(*crate::pagesize::PAGE_SIZE as u64),
+        };
+
+        assert!(matches!(
+            prepare_file(file.path(), &range),
+            Err(Error::UnalignedRange { .. })
+        ));
+    }
+
+    #[test]
+    fn overflowing_range_is_rejected_without_panicking() {
+        let (file, _) = create_temp_file(2);
+        let range = FileRange {
+            offset: *crate::pagesize::PAGE_SIZE as u64,
+            max_len: Some(u64::MAX),
+        };
+
+        assert!(matches!(
+            prepare_file(file.path(), &range),
+            Err(Error::RangeOverflow { .. })
+        ));
     }
 
     #[test]
