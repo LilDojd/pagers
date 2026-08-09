@@ -11,6 +11,37 @@ fn parse_json(output: &std::process::Output) -> serde_json::Value {
 }
 
 #[test]
+fn test_filters_apply_to_explicit_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = dir.path().join("dope_dealer228.txt");
+    fs_err::write(&text, vec![0u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", "-I", "*.bin", "-o", "kv", text.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Files=0"));
+}
+
+#[test]
+fn test_max_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+
+    fs_err::write(&file_path, vec![67u8; 4096]).unwrap();
+
+    let output = pagers_bin()
+        .args(["query", "-m", "1k", "-o", "kv", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Files=0"));
+}
+
+#[test]
 fn test_query_single_file() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");

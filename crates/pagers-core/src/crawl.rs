@@ -125,7 +125,9 @@ fn collect_paths(
             stats.total_dirs.fetch_add(1, Ordering::Relaxed);
             walk_dir_entries(path, crawl_config, needs_meta, seen_inodes, &mut emit);
         } else if path.is_file() {
-            emit(path.clone());
+            if explicit_file_allowed(path, crawl_config, needs_meta, seen_inodes) {
+                emit(path.clone());
+            }
         } else {
             tracing::warn!("skipping {}: not a file or directory", path.display());
         }
@@ -168,34 +170,62 @@ fn walk_dir_entries(
         }
 
         let entry_path = entry.path();
-        let meta = if needs_meta {
-            fs_err::metadata(entry_path).ok()
-        } else {
-            None
-        };
-
-        if let Some(max_size) = config.max_file_size
-            && let Some(ref m) = meta
-            && m.len() > max_size
-        {
-            continue;
+        if file_allowed(entry_path, config, needs_meta, seen_inodes) {
+            emit(entry_path.to_path_buf());
         }
+    }
+}
 
-        if !config.count_hardlinks {
-            #[cfg(unix)]
+fn explicit_file_allowed(
+    path: &Path,
+    config: &CrawlConfig,
+    needs_meta: bool,
+    seen_inodes: &InodeSet,
+) -> bool {
+    let root = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if let Some(overrides) =
+        build_overrides(root, config).expect("path patterns were validated before traversal")
+    {
+        let matched = overrides.matched(path, false);
+        if matched.is_ignore() || (!config.filter_patterns.is_empty() && !matched.is_whitelist()) {
+            return false;
+        }
+    }
+    file_allowed(path, config, needs_meta, seen_inodes)
+}
+
+fn file_allowed(
+    path: &Path,
+    config: &CrawlConfig,
+    needs_meta: bool,
+    seen_inodes: &InodeSet,
+) -> bool {
+    let meta = needs_meta.then(|| fs_err::metadata(path).ok()).flatten();
+
+    if let Some(max_size) = config.max_file_size
+        && let Some(ref metadata) = meta
+        && metadata.len() > max_size
+    {
+        return false;
+    }
+
+    if !config.count_hardlinks {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if let Some(ref metadata) = meta
+                && metadata.nlink() > 1
+                && seen_inodes.already_seen((metadata.dev(), metadata.ino()))
             {
-                use std::os::unix::fs::MetadataExt;
-                if let Some(ref m) = meta
-                    && m.nlink() > 1
-                    && seen_inodes.already_seen((m.dev(), m.ino()))
-                {
-                    continue;
-                }
+                return false;
             }
         }
-
-        emit(entry_path.to_path_buf());
     }
+
+    true
 }
 
 fn build_overrides(
