@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0](https://github.com/LilDojd/pagers/compare/v0.1.6...v0.2.0) - 2026-08-09
+
+### Fixed
+
+- final
+- *(cli)* print default-mode errors
+- *(daemon)* report pidfile failures
+- *(tui)* propagate errors and bound state
+- *(core)* propagate processing errors
+- *(cli)* reject malformed size ranges
+- *(daemon)* install signal handling after fork
+- *(cli)* retain foreground lock mappings
+- *(daemon)* close inherited stdio after readiness
+- *(core)* stop work when cancelled
+- *(cli)* validate path patterns before side effects
+- *(core)* enforce range invariants
+- *(core)* avoid single-thread traversal deadlock
+- apply selection rules to explicit files
+- *(tui)* identify duplicate path events
+- *(core)* drain cancelled traversals
+- *(core)* compile touch readahead on macOS
+- *(tui)* restore terminal after initialization errors
+
+### Other
+
+- refresh performance comparison
+- remove obsolete dispatch abstractions
+- *(core)* process files in parallel
+- *(core)* use dua-core for traversal
+- wip
+- *(core)* trim benchmark dependencies
+- *(core)* remove per-file readahead threads
+- overrides
+- cargo-hawk pass
+- add rc feat
+
 ## [0.1.6] - 2026-03-30
 
 ### Documentation
