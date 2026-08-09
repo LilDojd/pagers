@@ -65,12 +65,20 @@ pub(crate) fn hold(
     stats: &ops::Stats,
     inner: &LockInner,
     cancellation: &Cancellation,
-    notify_fd: Option<OwnedFd>,
-) {
+    mut notify_fd: Option<OwnedFd>,
+) -> Result<(), Error> {
     if let Some(p) = &inner.pidfile
-        && let Err(e) = fs_err::write(p, format!("{}\n", std::process::id()))
+        && let Err(source) = fs_err::write(p, format!("{}\n", std::process::id()))
     {
-        ::tracing::warn!("pidfile: {e}");
+        let error = Error::Core(pagers_core::Error::io(
+            format!("pidfile {}", p.display()),
+            source,
+        ));
+        if notify_fd.is_some() {
+            tracing::error!("{error}");
+        }
+        notify_and_redirect(notify_fd.take(), 1);
+        return Err(error);
     }
 
     let page_size = *pagers_core::pagesize::PAGE_SIZE;
@@ -88,6 +96,7 @@ pub(crate) fn hold(
     if let Some(p) = &inner.pidfile {
         let _ = fs_err::remove_file(p);
     }
+    Ok(())
 }
 
 pub(crate) fn notify_and_redirect(notify_fd: Option<OwnedFd>, status: u8) {
@@ -97,5 +106,24 @@ pub(crate) fn notify_and_redirect(notify_fd: Option<OwnedFd>, status: u8) {
         let _ = file.write_all(&[status]);
         drop(file);
         redirect_stdio();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_pidfile_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = LockInner {
+            daemon: false,
+            wait: false,
+            pidfile: Some(dir.path().join("missing/pagers.pid")),
+        };
+        let cancellation = Cancellation::new();
+        cancellation.cancel();
+
+        assert!(hold(&ops::Stats::new(), &lock, &cancellation, None).is_err());
     }
 }

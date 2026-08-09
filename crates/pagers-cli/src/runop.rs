@@ -26,7 +26,7 @@ where
     install_signal_handler(cancellation)?;
     let (stats, _outputs, _) = run_tui::<O, PM>(op, common, cancellation)?;
     if let Some(lock) = lock {
-        daemon::hold(&stats, lock, cancellation, None);
+        daemon::hold(&stats, lock, cancellation, None)?;
     }
     Ok(())
 }
@@ -48,7 +48,7 @@ where
         print_summary::<O>(&stats, elapsed, format.unwrap_or_default());
     }
     if let Some(lock) = lock {
-        daemon::hold(&stats, lock, cancellation, None);
+        daemon::hold(&stats, lock, cancellation, None)?;
     }
     Ok(())
 }
@@ -75,7 +75,7 @@ where
                     return Err(error);
                 }
             };
-            daemon::hold(&stats, lock, cancellation, notify_fd);
+            daemon::hold(&stats, lock, cancellation, notify_fd)?;
             Ok(())
         }
     }
