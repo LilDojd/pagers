@@ -30,11 +30,28 @@ const FRAME_BUDGET: Duration = Duration::from_millis(100);
 
 struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<Stdout>>,
+    _state: TerminalStateGuard,
+}
+
+struct TerminalStateGuard;
+
+impl TerminalStateGuard {
+    fn new() -> Result<Self> {
+        crossterm::terminal::enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalStateGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
 }
 
 impl TerminalGuard {
     fn new(viewport_height: u16) -> Result<Self> {
-        crossterm::terminal::enable_raw_mode()?;
+        let state = TerminalStateGuard::new()?;
         crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::with_options(
@@ -43,14 +60,10 @@ impl TerminalGuard {
                 viewport: Viewport::Inline(viewport_height),
             },
         )?;
-        Ok(Self { terminal })
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
-        let _ = crossterm::terminal::disable_raw_mode();
+        Ok(Self {
+            terminal,
+            _state: state,
+        })
     }
 }
 
