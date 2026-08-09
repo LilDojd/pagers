@@ -41,18 +41,6 @@ fn main() -> ExitCode {
     }
 
     let cancellation = Cancellation::new();
-    let signal_cancellation = cancellation.clone();
-    let mut signals = signal_hook::iterator::Signals::new(signal_hook::consts::TERM_SIGNALS)
-        .expect("register signals");
-    std::thread::spawn(move || {
-        for (index, _) in signals.forever().enumerate() {
-            if index == 0 {
-                signal_cancellation.cancel();
-            } else {
-                std::process::exit(1);
-            }
-        }
-    });
 
     match run(cli, &cancellation) {
         Ok(()) => ExitCode::SUCCESS,

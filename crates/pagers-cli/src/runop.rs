@@ -52,6 +52,7 @@ where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
+        install_signal_handler(self.cancellation)?;
         let (stats, _outputs, _) = run_tui::<O, PM>(&self.op, self.common, self.cancellation)?;
         if let Some(lock) = self.lock {
             daemon::hold(&stats, lock, self.cancellation, None);
@@ -66,6 +67,7 @@ where
     O::Output: 'static,
 {
     fn run(self) -> Result<(), Error> {
+        install_signal_handler(self.cancellation)?;
         let (stats, _outputs, elapsed) =
             run_cli::<O, PM>(&self.op, self.common, self.cancellation)?;
         if !self.quiet {
@@ -89,6 +91,7 @@ where
         match daemon::go_daemon(lock.wait)? {
             daemon::ForkOutcome::Parent => Ok(()),
             daemon::ForkOutcome::Child(notify_fd) => {
+                install_signal_handler(self.cancellation)?;
                 let (stats, _locks, _) =
                     run_cli_with_setup::<O, PM>(&self.op, setup, self.cancellation)?;
                 daemon::hold(&stats, lock, self.cancellation, notify_fd);
@@ -96,6 +99,22 @@ where
             }
         }
     }
+}
+
+fn install_signal_handler(cancellation: &Cancellation) -> Result<(), Error> {
+    let mut signals = signal_hook::iterator::Signals::new(signal_hook::consts::TERM_SIGNALS)
+        .map_err(pagers_core::Error::from)?;
+    let cancellation = cancellation.clone();
+    std::thread::spawn(move || {
+        for (index, _) in signals.forever().enumerate() {
+            if index == 0 {
+                cancellation.cancel();
+            } else {
+                std::process::exit(1);
+            }
+        }
+    });
+    Ok(())
 }
 
 pub(crate) type RunResult<O> = Result<(Arc<ops::Stats>, Vec<O>, f64), Error>;

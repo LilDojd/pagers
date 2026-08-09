@@ -97,6 +97,15 @@ fn test_daemon_wait_closes_captured_stdio() {
     if !pid.trim().is_empty() {
         let _ = Command::new("kill").args(["-TERM", pid.trim()]).status();
     }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while pidfile.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let stopped = !pidfile.exists();
+    if !stopped && !pid.trim().is_empty() {
+        let _ = Command::new("kill").args(["-KILL", pid.trim()]).status();
+        let _ = fs_err::remove_file(&pidfile);
+    }
 
     let output = match result {
         Ok(output) => output.unwrap(),
@@ -111,6 +120,7 @@ fn test_daemon_wait_closes_captured_stdio() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(stopped, "daemon did not stop after SIGTERM");
 }
 
 #[cfg(target_os = "linux")]
