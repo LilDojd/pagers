@@ -51,23 +51,33 @@ pub fn crawl_and_process<O: Op, PM: PageMap + Send + Sync, D: DisplayMode<PM>>(
         let buf = std::thread::available_parallelism().map_or(16, |n| n.get() * 4);
         let (tx, rx) = std::sync::mpsc::sync_channel::<PathBuf>(buf);
 
-        let outputs = pool.install(|| {
-            rayon::scope(|s| {
-                s.spawn({
-                    let tx = tx;
-                    move |_| {
-                        collect_paths(paths, crawl_config, &seen_inodes, stats, |p| {
-                            let _ = tx.send(p);
-                        });
-                    }
-                });
+        let outputs = if pool.current_num_threads() == 1 {
+            let mut outputs = Vec::new();
+            collect_paths(paths, crawl_config, &seen_inodes, stats, |path| {
+                if let Some(output) = display.process_one::<O>(op, &path, range, stats) {
+                    outputs.push(output);
+                }
+            });
+            outputs
+        } else {
+            pool.install(|| {
+                rayon::scope(|s| {
+                    s.spawn({
+                        let tx = tx;
+                        move |_| {
+                            collect_paths(paths, crawl_config, &seen_inodes, stats, |p| {
+                                let _ = tx.send(p);
+                            });
+                        }
+                    });
 
-                rx.into_iter()
-                    .par_bridge()
-                    .filter_map(|path| display.process_one::<O>(op, &path, range, stats))
-                    .collect::<Vec<_>>()
+                    rx.into_iter()
+                        .par_bridge()
+                        .filter_map(|path| display.process_one::<O>(op, &path, range, stats))
+                        .collect::<Vec<_>>()
+                })
             })
-        });
+        };
 
         display.finish();
         op.finish()?;

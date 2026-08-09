@@ -41,6 +41,34 @@ fn test_max_size() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Files=0"));
 }
 
+#[cfg(feature = "rayon")]
+#[test]
+fn test_query_single_thread_completes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("test.dat");
+    fs_err::write(&file_path, vec![0u8; 4096]).unwrap();
+
+    let mut child = pagers_bin()
+        .args(["query", "-j", "1", "-o", "kv", file_path.to_str().unwrap()])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            let _ = child.wait();
+            panic!("single-thread query timed out");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn test_query_single_file() {
     let dir = tempfile::tempdir().unwrap();
