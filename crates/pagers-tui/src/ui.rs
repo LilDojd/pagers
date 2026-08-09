@@ -1,8 +1,8 @@
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui_core::buffer::Buffer;
+use ratatui_core::layout::{Constraint, Layout, Rect};
+use ratatui_core::style::{Color, Style};
+use ratatui_core::text::{Line, Span};
+use ratatui_core::widgets::Widget;
 
 use pagers_core::mincore::PageMap;
 
@@ -122,8 +122,8 @@ fn truncate_path(path: &str, max_width: usize) -> String {
 mod tests {
     use super::*;
     use bitvec::prelude::Lsb0;
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
+    use ratatui_core::backend::TestBackend;
+    use ratatui_core::terminal::Terminal;
 
     fn buffer_to_string(buf: &Buffer) -> String {
         let mut s = String::new();

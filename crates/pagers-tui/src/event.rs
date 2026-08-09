@@ -5,6 +5,7 @@ use std::time::Duration;
 use pagers_core::Cancellation;
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::mincore::DefaultPageMap;
+use ratatui_crossterm::crossterm;
 
 /// Internal event type combining core events with TUI-specific events.
 pub(crate) enum TuiEvent<PM = DefaultPageMap> {

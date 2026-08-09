@@ -17,12 +17,11 @@ use pagers_core::Cancellation;
 use pagers_core::events::Event as CoreEvent;
 use pagers_core::mincore::PageMap;
 use pagers_core::ops::Stats;
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::widgets::Widget;
-use ratatui::{TerminalOptions, Viewport};
+use ratatui_core::buffer::Buffer;
+use ratatui_core::layout::Rect;
+use ratatui_core::terminal::{Terminal, TerminalOptions, Viewport};
+use ratatui_core::widgets::Widget;
+use ratatui_crossterm::{CrosstermBackend, crossterm};
 
 const MAX_DISPLAY_FILES: u16 = 8;
 const MAX_DISPLAY_PAGES: usize = 32;

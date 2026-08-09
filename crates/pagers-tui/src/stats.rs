@@ -1,11 +1,10 @@
 use std::sync::atomic::Ordering;
 
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::macros::horizontal;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui_core::buffer::Buffer;
+use ratatui_core::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui_core::style::{Color, Style};
+use ratatui_core::text::{Line, Span};
+use ratatui_core::widgets::Widget;
 
 use pagers_core::ops::Stats;
 use pagers_core::output::{pretty_elapsed, pretty_size};
@@ -66,8 +65,12 @@ impl Widget for SummaryWidget<'_> {
         let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
         let line_areas = Layout::vertical(constraints).split(area);
         for (i, (label_text, value_line)) in rows.into_iter().enumerate() {
-            let [label_area, _, value_area] =
-                horizontal![==LABEL_WIDTH, ==1, *=1].areas(line_areas[i]);
+            let [label_area, _, value_area] = Layout::horizontal([
+                Constraint::Length(LABEL_WIDTH),
+                Constraint::Length(1),
+                Constraint::Fill(1),
+            ])
+            .areas(line_areas[i]);
 
             Line::from(Span::styled(label_text, label_style))
                 .alignment(Alignment::Right)
