@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use memmap2::MmapOptions;
@@ -21,12 +21,12 @@ pub trait FileProcessed {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FullResult<O, PM> {
-    pub(crate) output: O,
-    pub(crate) total_pages: usize,
-    pub(crate) pages_in_core_before: usize,
-    pub(crate) pages_in_core_after: usize,
-    pub(crate) residency_before: Option<PM>,
-    pub(crate) residency_after: Option<PM>,
+    pub output: O,
+    pub total_pages: usize,
+    pub pages_in_core_before: usize,
+    pub pages_in_core_after: usize,
+    pub residency_before: Option<PM>,
+    pub residency_after: Option<PM>,
 }
 
 impl<O, PM> FileProcessed for FullResult<O, PM> {
@@ -50,9 +50,10 @@ impl<O, PM> FileProcessed for FullResult<O, PM> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CountsResult<O> {
-    pub(crate) output: O,
-    pub(crate) total_pages: usize,
-    pub(crate) pages_in_core_after: usize,
+    pub output: O,
+    pub total_pages: usize,
+    pub pages_in_core_before: usize,
+    pub pages_in_core_after: usize,
 }
 
 impl<O> FileProcessed for CountsResult<O> {
@@ -66,34 +67,16 @@ impl<O> FileProcessed for CountsResult<O> {
     fn total_pages(&self) -> usize {
         self.total_pages
     }
+    fn pages_in_core_before(&self) -> Option<usize> {
+        Some(self.pages_in_core_before)
+    }
     fn pages_in_core_after(&self) -> usize {
         self.pages_in_core_after
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SkipResult<O> {
-    pub(crate) output: O,
-    pub(crate) total_pages: usize,
-}
-
-impl<O> FileProcessed for SkipResult<O> {
-    type Output = O;
-    fn into_output(self) -> O {
-        self.output
-    }
-    fn output_ref(&self) -> &O {
-        &self.output
-    }
-    fn total_pages(&self) -> usize {
-        self.total_pages
-    }
-    fn pages_in_core_after(&self) -> usize {
-        0
-    }
-}
-
 pub(crate) struct PreparedFile {
+    pub path: PathBuf,
     pub file: File,
     pub offset: u64,
     pub len: usize,
@@ -129,6 +112,7 @@ pub(crate) fn prepare_file(path: &Path, range: &FileRange) -> crate::Result<Opti
     });
 
     Ok(Some(PreparedFile {
+        path: path.to_path_buf(),
         file: file.into_file(),
         offset,
         len,
@@ -190,6 +174,18 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use super::super::*;
+
+    struct AdvisoryNoop;
+
+    impl Op for AdvisoryNoop {
+        const LABEL: &str = "advisory noop";
+        const EFFECT: ResidencyEffect = ResidencyEffect::EvictAdvisory;
+        type Output = ();
+
+        fn execute<PM: PageMap + Sync>(&self, _ctx: &FileContext<'_, PM>) -> crate::Result<()> {
+            Ok(())
+        }
+    }
 
     fn create_temp_file(pages: usize) -> (tempfile::NamedTempFile, usize) {
         let page_size = *crate::pagesize::PAGE_SIZE;
@@ -385,5 +381,25 @@ mod tests {
         assert_eq!(stats.action_pages.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_files.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_dirs.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn advisory_effect_measures_the_after_state() {
+        let (f, _) = create_temp_file(4);
+        let range = FileRange {
+            offset: 0,
+            max_len: None,
+        };
+
+        let result =
+            mode::counts_process_file::<AdvisoryNoop, Vec<bool>>(&AdvisoryNoop, f.path(), &range)
+                .unwrap()
+                .unwrap();
+
+        assert!(result.pages_in_core_before > 0);
+        assert_eq!(
+            result.pages_in_core_after, result.pages_in_core_before,
+            "an advisory operation must measure rather than assume its after-state"
+        );
     }
 }

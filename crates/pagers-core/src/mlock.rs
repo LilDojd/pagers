@@ -6,7 +6,7 @@ use nix::sys::mman::{MlockAllFlags, mlockall};
 
 use crate::error::MlockError;
 
-pub(crate) fn mlock(mmap: &Mmap, len: usize) -> crate::Result<()> {
+pub fn mlock(mmap: &Mmap, len: usize) -> crate::Result<()> {
     // SAFETY: mmap.as_ptr() points to a valid memory-mapped region of at least `len` bytes.
     let addr = NonNull::new(mmap.as_ptr() as *mut std::ffi::c_void)
         .expect("mmap pointer should never be null");
@@ -21,7 +21,7 @@ pub(crate) fn mlock(mmap: &Mmap, len: usize) -> crate::Result<()> {
     Ok(())
 }
 
-pub(crate) fn mlockall_current() -> crate::Result<()> {
+pub fn mlockall_current() -> crate::Result<()> {
     mlockall(MlockAllFlags::MCL_CURRENT).map_err(|e| match e {
         Errno::EPERM => MlockError::PermissionDenied { call: "mlockall" },
         Errno::ENOMEM => MlockError::OutOfMemory {

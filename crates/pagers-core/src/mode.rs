@@ -5,7 +5,8 @@ use std::sync::mpsc::Sender;
 use crate::events::{Event, EventSink};
 use crate::mincore::{DefaultPageMap, PageMap};
 use crate::ops::{
-    self, FileContext, FileProcessed, FileRange, Op, PreparedFile, Stats, prepare_file,
+    self, FileContext, FileProcessed, FileRange, Op, PreparedFile, ResidencyEffect, Stats,
+    prepare_file,
 };
 
 pub trait DisplayMode<PM: PageMap = DefaultPageMap>: Sync {
@@ -28,6 +29,24 @@ impl<PM: PageMap> Tui<PM> {
     pub fn new(sender: Sender<Event<PM>>) -> Self {
         Self {
             sink: EventSink::new(sender),
+        }
+    }
+
+    fn send_residency(&self, path: &std::sync::Arc<str>, page_offset: usize, residency: &PM) {
+        let mut start = 0;
+        while start < residency.len() {
+            let resident = residency.is_set(start);
+            let mut end = start + 1;
+            while end < residency.len() && residency.is_set(end) == resident {
+                end += 1;
+            }
+            self.sink.send(Event::FileProgress {
+                path: path.clone(),
+                page_offset: page_offset + start,
+                pages_walked: end - start,
+                resident,
+            });
+            start = end;
         }
     }
 }
@@ -77,49 +96,20 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
 
         let prepared_pf = if range.is_full_file() { Some(pf) } else { None };
 
-        if O::SKIP_RESIDENCY {
-            let result = match skip_process_file::<O, PM>(op, path, range, prepared_pf) {
-                Ok(Some(r)) => r,
-                Ok(None) => return None,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    return None;
-                }
-            };
-
-            let total_action = O::action_pages(
-                result.output_ref(),
-                result.total_pages(),
-                result.pages_in_core_before(),
-                result.pages_in_core_after(),
-            );
-            stats
-                .action_pages
-                .fetch_add(total_action, Ordering::Relaxed);
-
-            self.sink.send(Event::FileProgress {
-                path: path_str.clone(),
-                page_offset: 0,
-                pages_walked: total_pages,
-                resident: O::ACTION_SIGN >= 0,
-            });
-            self.sink.send(Event::FileDone { path: path_str });
-
-            return Some(result.into_output());
-        }
-
         let page_offset = range.offset as usize / *crate::pagesize::PAGE_SIZE;
         let reported_action = std::sync::atomic::AtomicUsize::new(0);
         let on_progress = |pages_walked: usize, action_count: usize| {
             let action = action_count;
-            let delta = action - reported_action.swap(action, Ordering::Relaxed);
+            let delta = action.saturating_sub(reported_action.swap(action, Ordering::Relaxed));
             stats.action_pages.fetch_add(delta, Ordering::Relaxed);
-            self.sink.send(Event::FileProgress {
-                path: path_str.clone(),
-                page_offset,
-                pages_walked,
-                resident: O::ACTION_SIGN >= 0,
-            });
+            if let Some(resident) = O::EFFECT.progress_resident() {
+                self.sink.send(Event::FileProgress {
+                    path: path_str.clone(),
+                    page_offset,
+                    pages_walked,
+                    resident,
+                });
+            }
         };
 
         let prepared_full = prepared_pf.map(|pf| (pf, residency, pages_in_core));
@@ -135,15 +125,21 @@ impl<PM: PageMap + Clone + Send + Sync> DisplayMode<PM> for Tui<PM> {
 
         // Flush remaining action_pages not covered by the progress callback.
         let reported = reported_action.load(Ordering::Relaxed);
-        let total_action = O::action_pages(
-            result.output_ref(),
-            result.total_pages(),
-            result.pages_in_core_before(),
+        let total_action = O::EFFECT.action_pages(
+            result
+                .pages_in_core_before()
+                .unwrap_or(result.pages_in_core_after()),
             result.pages_in_core_after(),
         );
         stats
             .action_pages
-            .fetch_add(total_action - reported, Ordering::Relaxed);
+            .fetch_add(total_action.saturating_sub(reported), Ordering::Relaxed);
+
+        if O::EFFECT.has_action()
+            && let Some(residency_after) = result.residency_after.as_ref()
+        {
+            self.send_residency(&path_str, page_offset, residency_after);
+        }
 
         self.sink.send(Event::FileDone { path: path_str });
 
@@ -171,20 +167,6 @@ impl<PM: PageMap + Send + Sync> DisplayMode<PM> for Cli {
         range: &FileRange,
         stats: &Stats,
     ) -> Option<O::Output> {
-        if O::SKIP_RESIDENCY {
-            let result = match skip_process_file::<O, PM>(op, path, range, None) {
-                Ok(Some(r)) => r,
-                Ok(None) => return None,
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    return None;
-                }
-            };
-            cli_record_stats::<O>(&result, stats);
-            tracing::info!("{}: {} pages", path.display(), result.total_pages());
-            return Some(result.into_output());
-        }
-
         let result = match counts_process_file::<O, PM>(op, path, range) {
             Ok(Some(r)) => r,
             Ok(None) => return None,
@@ -223,30 +205,36 @@ pub(crate) fn full_process_file<O: Op, PM: PageMap + Sync>(
         }
     };
 
-    let ctx = FileContext {
-        file: &pf.file,
-        path,
-        mmap: std::sync::Arc::clone(&pf.mmap),
-        offset: pf.offset,
-        len: pf.len,
-        on_progress,
-        residency: Some(&residency_before),
-    };
+    let ctx = FileContext::from(pf)
+        .with_progress(on_progress)
+        .with_residency(Some(&residency_before));
 
     let output = op.execute(&ctx)?;
+    let total_pages = ctx.total_pages();
 
-    let (pages_in_core_after, residency_before, residency_after) = if O::MUTATES_RESIDENCY {
-        let fill = O::ACTION_SIGN >= 0;
-        let after = PM::from_bools(std::iter::repeat_n(fill, pf.total_pages));
-        let count = if fill { pf.total_pages } else { 0 };
-        (count, Some(residency_before), Some(after))
-    } else {
-        (pages_in_core_before, None, Some(residency_before))
+    let (pages_in_core_after, residency_after) = match O::EFFECT {
+        ResidencyEffect::Preserve => (pages_in_core_before, None),
+        ResidencyEffect::Populate => {
+            let after = PM::from_bools(std::iter::repeat_n(true, total_pages));
+            (total_pages, Some(after))
+        }
+        ResidencyEffect::EvictAdvisory => {
+            let after: PM = crate::mincore::residency(ctx.mmap(), ctx.len())?;
+            let count = after.count_filled();
+            (count, Some(after))
+        }
+    };
+    drop(ctx);
+    let (residency_before, residency_after) = match O::EFFECT {
+        ResidencyEffect::Preserve => (None, Some(residency_before)),
+        ResidencyEffect::Populate | ResidencyEffect::EvictAdvisory => {
+            (Some(residency_before), residency_after)
+        }
     };
 
     Ok(Some(ops::FullResult {
         output,
-        total_pages: pf.total_pages,
+        total_pages,
         pages_in_core_before,
         pages_in_core_after,
         residency_before,
@@ -263,84 +251,41 @@ pub(crate) fn counts_process_file<O: Op, PM: PageMap + Sync>(
         return Ok(None);
     };
 
-    let residency: Option<PM> = if O::MUTATES_RESIDENCY {
-        Some(crate::mincore::residency(&pf.mmap, pf.len)?)
-    } else {
-        None
+    let residency: Option<PM> = match O::EFFECT {
+        ResidencyEffect::Populate => Some(crate::mincore::residency(&pf.mmap, pf.len)?),
+        ResidencyEffect::Preserve | ResidencyEffect::EvictAdvisory => None,
+    };
+    let pages_in_core_before = match residency.as_ref() {
+        Some(residency) => residency.count_filled(),
+        None => counts_page_count::<PM>(&pf.file, &pf.mmap, pf.offset, pf.len)?,
     };
 
-    let ctx = FileContext {
-        file: &pf.file,
-        path,
-        mmap: std::sync::Arc::clone(&pf.mmap),
-        offset: pf.offset,
-        len: pf.len,
-        on_progress: None,
-        residency: residency.as_ref(),
-    };
+    let ctx = FileContext::from(pf).with_residency(residency.as_ref());
 
     let output = op.execute(&ctx)?;
+    let total_pages = ctx.total_pages();
 
-    let pages_in_core_after = if O::MUTATES_RESIDENCY {
-        if O::ACTION_SIGN >= 0 {
-            pf.total_pages
-        } else {
-            0
+    let pages_in_core_after = match O::EFFECT {
+        ResidencyEffect::Preserve => pages_in_core_before,
+        ResidencyEffect::Populate => total_pages,
+        ResidencyEffect::EvictAdvisory => {
+            counts_page_count::<PM>(ctx.file(), ctx.mmap(), ctx.offset(), ctx.len())?
         }
-    } else {
-        counts_page_count::<PM>(&pf.file, &pf.mmap, pf.offset, pf.len)?
     };
 
     Ok(Some(ops::CountsResult {
         output,
-        total_pages: pf.total_pages,
+        total_pages,
+        pages_in_core_before,
         pages_in_core_after,
     }))
 }
 
-fn skip_process_file<O: Op, PM: PageMap + Sync>(
-    op: &O,
-    path: &Path,
-    range: &FileRange,
-    prepared: Option<PreparedFile>,
-) -> crate::Result<Option<ops::SkipResult<O::Output>>> {
-    let pf = match prepared {
-        Some(pf) => pf,
-        None => {
-            let Some(pf) = prepare_file(path, range)? else {
-                return Ok(None);
-            };
-            pf
-        }
-    };
-
-    let ctx = FileContext {
-        file: &pf.file,
-        path,
-        mmap: std::sync::Arc::clone(&pf.mmap),
-        offset: pf.offset,
-        len: pf.len,
-        on_progress: None,
-        residency: None::<&PM>,
-    };
-
-    let output = op.execute(&ctx)?;
-
-    Ok(Some(ops::SkipResult {
-        output,
-        total_pages: pf.total_pages,
-    }))
-}
-
 fn cli_record_stats<O: Op>(result: &impl FileProcessed<Output = O::Output>, stats: &Stats) {
-    let action = O::action_pages(
-        result.output_ref(),
-        result.total_pages(),
-        result.pages_in_core_before(),
-        result.pages_in_core_after(),
-    );
-    let signed_action = action as isize * O::ACTION_SIGN;
-    let initial = (result.pages_in_core_after() as isize - signed_action).max(0) as usize;
+    let initial = result
+        .pages_in_core_before()
+        .unwrap_or(result.pages_in_core_after());
+    let action = O::EFFECT.action_pages(initial, result.pages_in_core_after());
     stats
         .total_pages
         .fetch_add(result.total_pages(), Ordering::Relaxed);

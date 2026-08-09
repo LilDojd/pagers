@@ -1,9 +1,9 @@
-pub(crate) mod cachestat;
+pub mod cachestat;
 pub mod crawl;
 pub mod error;
 pub mod events;
 pub mod mincore;
-pub(crate) mod mlock;
+pub mod mlock;
 pub mod mode;
 pub mod ops;
 pub mod output;

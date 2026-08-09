@@ -163,7 +163,7 @@ where
     let term_clone = Arc::clone(term);
     let stats_clone = Arc::clone(&stats);
     let tui_label = O::LABEL.to_string();
-    let action_sign = O::ACTION_SIGN;
+    let action_sign = O::EFFECT.action_sign();
     let tui_handle = std::thread::spawn(move || {
         if let Err(e) = pagers_tui::run(rx, term_clone, stats_clone, &tui_label, action_sign, start)
         {
@@ -212,6 +212,6 @@ where
 }
 
 fn print_summary<O: ops::Op>(stats: &ops::Stats, elapsed: f64, fmt: OutputFormatArg) {
-    let summary = Summary::from_stats(stats, elapsed, O::ACTION_SIGN);
-    fmt.print_summary(&summary, O::LABEL, O::ACTION_SIGN != 0);
+    let summary = Summary::from_stats(stats, elapsed, O::EFFECT.action_sign());
+    fmt.print_summary(&summary, O::LABEL, O::EFFECT.has_action());
 }

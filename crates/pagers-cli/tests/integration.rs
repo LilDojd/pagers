@@ -609,13 +609,13 @@ fn test_batch_empty_lines_skipped() {
 }
 
 #[test]
-fn test_touch_reports_nonzero_touched_and_resident() {
+fn test_touch_reports_consistent_counts_and_resident() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
     fs_err::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
     fs_err::File::open(&file_path).unwrap().sync_all().unwrap();
 
-    // Evict first so touch has pages to bring in
+    // Advise eviction first; the kernel may still retain some or all pages.
     let output = pagers_bin()
         .args(["evict", "-o", "human", file_path.to_str().unwrap()])
         .output()
@@ -633,12 +633,12 @@ fn test_touch_reports_nonzero_touched_and_resident() {
     let total = json["total_pages"].as_i64().unwrap();
     let resident = json["total_resident_pages"].as_i64().unwrap();
     assert!(total > 0);
-    assert!(touched > 0, "touched_pages should be > 0, got: {touched}");
+    assert!(touched <= total, "touched_pages exceeds total: {json}");
     assert_eq!(resident, total, "all pages should be resident after touch");
 }
 
 #[test]
-fn test_evict_reports_nonzero_evicted() {
+fn test_evict_reports_measured_residency_delta() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("test.dat");
     fs_err::write(&file_path, vec![0xABu8; 4096 * 50]).unwrap();
@@ -660,11 +660,7 @@ fn test_evict_reports_nonzero_evicted() {
     let evicted = json["evicted_pages"].as_i64().unwrap();
     let total = json["total_pages"].as_i64().unwrap();
     let resident = json["total_resident_pages"].as_i64().unwrap();
-    assert!(evicted > 0, "evicted_pages should be > 0, got: {evicted}");
-    assert!(
-        resident < total,
-        "resident should be less than total after evict"
-    );
+    assert_eq!(evicted + resident, total, "inconsistent summary: {json}");
 }
 
 #[test]
@@ -724,16 +720,24 @@ fn test_touch_then_evict_round_trip() {
         .unwrap();
     assert!(output.status.success());
     let json = parse_json(&output);
-    assert!(json["evicted_pages"].as_i64().unwrap() > 0);
+    let resident_after_evict = json["total_resident_pages"].as_i64().unwrap();
+    assert_eq!(
+        json["evicted_pages"].as_i64().unwrap() + resident_after_evict,
+        total,
+        "inconsistent eviction summary: {json}"
+    );
 
-    // Query: 0% resident
+    // Query must agree with the measured eviction result.
     let output = pagers_bin()
         .args(["query", "-o", "json", file_path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(output.status.success());
     let json = parse_json(&output);
-    assert_eq!(json["total_resident_pages"].as_i64().unwrap(), 0);
+    assert_eq!(
+        json["total_resident_pages"].as_i64().unwrap(),
+        resident_after_evict
+    );
 }
 
 #[test]
@@ -745,7 +749,7 @@ fn test_touch_directory_reports_counts() {
         fs_err::File::open(&path).unwrap().sync_all().unwrap();
     }
 
-    // Evict first so touch has pages to bring in
+    // Advise eviction first; the kernel may still retain some or all pages.
     let output = pagers_bin()
         .args(["evict", "-o", "human", dir.path().to_str().unwrap()])
         .output()
@@ -760,8 +764,11 @@ fn test_touch_directory_reports_counts() {
     assert!(output.status.success());
     let json = parse_json(&output);
     assert_eq!(json["files"].as_i64().unwrap(), 5);
-    assert!(json["touched_pages"].as_i64().unwrap() > 0);
-    assert!(json["total_resident_pages"].as_i64().unwrap() > 0);
+    assert!(json["touched_pages"].as_i64().unwrap() <= json["total_pages"].as_i64().unwrap());
+    assert_eq!(
+        json["total_resident_pages"].as_i64().unwrap(),
+        json["total_pages"].as_i64().unwrap()
+    );
 }
 
 #[test]
@@ -771,7 +778,7 @@ fn test_touch_kv_has_both_metrics() {
     fs_err::write(&file_path, vec![0xABu8; 4096 * 20]).unwrap();
     fs_err::File::open(&file_path).unwrap().sync_all().unwrap();
 
-    // Evict first so touch has pages to bring in
+    // Advise eviction first; the kernel may still retain some or all pages.
     let output = pagers_bin()
         .args(["evict", "-o", "human", file_path.to_str().unwrap()])
         .output()
@@ -787,10 +794,6 @@ fn test_touch_kv_has_both_metrics() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("TouchedPages="), "stdout: {stdout}");
     assert!(stdout.contains("TotalResidentPages="), "stdout: {stdout}");
-    assert!(
-        !stdout.contains("TouchedPages=0"),
-        "TouchedPages should not be 0, got: {stdout}"
-    );
 }
 
 #[test]

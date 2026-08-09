@@ -2,7 +2,7 @@ use memmap2::Advice;
 
 use crate::mincore::PageMap;
 
-use super::{FileContext, Op};
+use super::{FileContext, Op, ResidencyEffect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -10,21 +10,12 @@ pub struct Touch;
 
 impl Op for Touch {
     const LABEL: &str = "touched";
-    const ACTION_SIGN: isize = 1;
+    const EFFECT: ResidencyEffect = ResidencyEffect::Populate;
     type Output = usize;
 
-    fn action_pages(
-        output: &usize,
-        _total_pages: usize,
-        _pages_in_core_before: Option<usize>,
-        _pages_in_core_after: usize,
-    ) -> usize {
-        *output
-    }
-
     fn execute<PM: PageMap + Sync>(&self, ctx: &FileContext<'_, PM>) -> crate::Result<usize> {
-        let mmap = &ctx.mmap;
-        let len = ctx.len;
+        let mmap = ctx.mmap();
+        let len = ctx.len();
 
         if len == 0 {
             return Ok(0);
@@ -33,7 +24,7 @@ impl Op for Touch {
         let page_size = *crate::pagesize::PAGE_SIZE;
         let total_pages = len.div_ceil(page_size);
 
-        let needs_touch = |i: &usize| ctx.residency.is_none_or(|r| !r.is_set(*i));
+        let needs_touch = |i: &usize| ctx.residency().is_none_or(|r| !r.is_set(*i));
 
         let mut touched = 0usize;
 
@@ -49,10 +40,8 @@ impl Op for Touch {
                         std::ptr::read_volatile(mmap.as_ptr().add(offset));
                     }
                     touched += 1;
-                    if let Some(on_progress) = &ctx.on_progress
-                        && (page_idx + 1) % PROGRESS_INTERVAL == 0
-                    {
-                        on_progress(page_idx + 1, touched);
+                    if (page_idx + 1) % PROGRESS_INTERVAL == 0 {
+                        ctx.report_progress(page_idx + 1, touched);
                     }
                 }
             });
@@ -63,13 +52,13 @@ impl Op for Touch {
 }
 
 fn initiate_readahead<PM: PageMap>(ctx: &FileContext<'_, PM>) {
-    let offset = ctx.offset as libc::off_t;
-    let len = ctx.len as libc::off_t;
+    let offset = ctx.offset() as libc::off_t;
+    let len = ctx.len() as libc::off_t;
 
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsFd;
-        let fd = ctx.file.as_fd();
+        let fd = ctx.file().as_fd();
         let _ = nix::fcntl::posix_fadvise(
             fd,
             offset,
@@ -85,6 +74,6 @@ fn initiate_readahead<PM: PageMap>(ctx: &FileContext<'_, PM>) {
     }
 
     let _ = ctx
-        .mmap
+        .mmap()
         .advise_range(Advice::WillNeed, offset as usize, len as usize);
 }

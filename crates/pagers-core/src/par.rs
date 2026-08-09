@@ -42,7 +42,7 @@ mod rayon_impl {
     }
 
     impl Threads {
-        pub(crate) fn num_threads(self) -> usize {
+        pub fn num_threads(self) -> usize {
             match self {
                 Self::All => 0,
                 Self::Exact(n) => n.get() as usize,
