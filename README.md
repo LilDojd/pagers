@@ -38,6 +38,8 @@ Pre-built binaries for each release are available on the [GitHub releases page](
 
 ### Docker
 
+Container images are published to GHCR and Docker Hub.
+
 ```
 docker pull ghcr.io/lildojd/pagers:latest
 docker run --rm -v /data:/data ghcr.io/lildojd/pagers query /data
