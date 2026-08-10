@@ -66,6 +66,11 @@ jobs:
       - name: Push to GHCR
         if: github.event_name != 'pull_request'
         run: |
+          cat > "$RUNNER_TEMP/registries.conf" <<'EOF'
+          unqualified-search-registries = ["docker.io"]
+          EOF
+          export REGISTRIES_CONFIG_PATH="$RUNNER_TEMP/registries.conf"
+
           nix run .#${{ matrix.nix-package }}.copyTo -- \
             docker://${{ steps.repo.outputs.image }}:${{ steps.tag.outputs.value }} \
             --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}"
@@ -73,6 +78,11 @@ jobs:
       - name: Push to Docker Hub
         if: github.event_name != 'pull_request'
         run: |
+          cat > "$RUNNER_TEMP/registries.conf" <<'EOF'
+          unqualified-search-registries = ["docker.io"]
+          EOF
+          export REGISTRIES_CONFIG_PATH="$RUNNER_TEMP/registries.conf"
+
           nix run .#${{ matrix.nix-package }}.copyTo -- \
             docker://${{ secrets.DOCKER_HUB_USERNAME }}/pagers:${{ steps.tag.outputs.value }} \
             --dest-creds "${{ secrets.DOCKER_HUB_USERNAME }}:${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}"
