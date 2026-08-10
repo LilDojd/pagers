@@ -88,9 +88,11 @@ jobs:
 
       - name: Scan the image
         if: github.event_name != 'pull_request'
+        continue-on-error: true
         uses: anchore/sbom-action@v0
         with:
           image: ${{ steps.repo.outputs.image }}:${{ steps.tag.outputs.value }}
+          upload-release-assets: false
 
   manifest:
     name: Create multi-arch manifest
