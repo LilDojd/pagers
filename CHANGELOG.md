@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2](https://github.com/LilDojd/pagers/compare/v0.2.1...v0.2.2) - 2026-08-10
+
+### Other
+
+- *(core)* synchronize traversal cancellation
+
 ## [0.2.1](https://github.com/LilDojd/pagers/compare/v0.2.0...v0.2.1) - 2026-08-10
 
 ### Other
