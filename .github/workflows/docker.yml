@@ -9,6 +9,12 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish, for example v0.2.1
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -119,7 +125,10 @@ jobs:
           SHA="${GITHUB_SHA::7}"
           TAGS="sha-${SHA}"
 
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          if [[ -n "${{ inputs.release_tag }}" ]]; then
+            VERSION="${{ inputs.release_tag }}"
+            TAGS="${TAGS} ${VERSION#v} latest"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             TAGS="${TAGS} ${VERSION} latest"
           elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
