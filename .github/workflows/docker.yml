@@ -24,7 +24,7 @@ jobs:
     name: Build (${{ matrix.arch }})
     runs-on: ubuntu-latest
     env:
-      CONTAINERS_REGISTRIES_CONF: ${{ runner.temp }}/registries-v2.conf
+      CONTAINERS_REGISTRIES_CONF: ${{ github.workspace }}/.registries-v2.conf
     strategy:
       fail-fast: false
       matrix:
