@@ -654,9 +654,12 @@ mod tests {
         let cancellation = Cancellation::new();
         let worker_cancellation = cancellation.clone();
         let root = dir.path().to_owned();
-        let (sender, receiver) = std::sync::mpsc::channel();
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let (resume_sender, resume_receiver) = std::sync::mpsc::channel();
+        let (result_sender, result_receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut seen = HashSet::new();
+            let mut started = false;
             let result = walk_dir_entries(
                 &root,
                 &config,
@@ -664,14 +667,24 @@ mod tests {
                 &mut seen,
                 &Stats::new(),
                 &worker_cancellation,
-                |_| Ok(()),
+                |_| {
+                    if !started {
+                        started = true;
+                        started_sender.send(()).unwrap();
+                        resume_receiver.recv().unwrap();
+                    }
+                    Ok(())
+                },
             );
-            let _ = sender.send(result);
+            let _ = result_sender.send(result);
         });
 
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        started_receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("traversal did not start");
         cancellation.cancel();
-        let result = receiver
+        resume_sender.send(()).unwrap();
+        let result = result_receiver
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("cancelled traversal deadlocked");
         assert!(matches!(result, Err(crate::Error::Cancelled)));
