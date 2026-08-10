@@ -13,7 +13,7 @@
         let
           toolchain = inputs.fenix.packages.${system}.fromToolchainFile {
             file = self + /rust-toolchain.toml;
-            sha256 = "sha256-qqF33vNuAdU5vua96VKVIwuc43j4EFeEXbjQ6+l4mO4=";
+            sha256 = "sha256-A1abGIbOtcBSdrUMhDGrER3pRM1hQP4fp9gh3Y4PKc8=";
           };
           craneLib = (inputs.crane.mkLib crossPkgs).overrideToolchain (_: toolchain);
           src = craneLib.cleanCargoSource self;
