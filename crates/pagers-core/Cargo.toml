@@ -19,7 +19,7 @@ log-max-level-info = ["tracing/max_level_info"]
 [dependencies]
 serde = { version = "1", features = ["derive", "rc"], optional = true }
 bitvec = { workspace = true, optional = true }
-dua-core = "2.41.1"
+dua-core = "3.1.0"
 fs-err = { workspace = true }
 humantime = { workspace = true }
 ignore = "0.4"
