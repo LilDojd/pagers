@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3](https://github.com/LilDojd/pagers/compare/v0.2.2...v0.2.3) - 2026-09-02
+
+### Other
+
+- update Cargo.lock dependencies
+- *(deps)* Bump dua-core from 2.41.1 to 3.1.0 ([#66](https://github.com/LilDojd/pagers/pull/66))
+
 ## [0.2.2](https://github.com/LilDojd/pagers/compare/v0.2.1...v0.2.2) - 2026-08-10
 
 ### Other
