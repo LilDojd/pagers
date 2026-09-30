@@ -848,7 +848,7 @@ dependencies = [
 
 [[package]]
 name = "pagers"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anstyle",
  "clap",
@@ -869,7 +869,7 @@ dependencies = [
 
 [[package]]
 name = "pagers-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bitvec",
  "criterion",
@@ -888,7 +888,7 @@ dependencies = [
 
 [[package]]
 name = "pagers-tui"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "pagers-core",
  "ratatui-core",
