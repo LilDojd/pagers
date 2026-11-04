@@ -489,9 +489,9 @@ dependencies = [
 
 [[package]]
 name = "dua-core"
-version = "5.0.0"
+version = "5.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6b171d74d0144b938cbd010df42fb3a67dcd34de0d01b37fd7a94ce02313eb9"
+checksum = "45d7acf89927f4f019769ba5ac4d32a4d8be0b92b9084c3422f06aa78d4c97cf"
 dependencies = [
  "crossbeam",
  "libc",
@@ -630,9 +630,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "ignore"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b69833ed729dc5aa7d19541d96d6cf8e9137194207a04916d658e43168402f"
+checksum = "484be5657551d7868d67587df967fb4fcbe9d266a761cc855aaa148fda0b3cc7"
 dependencies = [
  "crossbeam-deque",
  "globset",
@@ -860,7 +860,7 @@ dependencies = [
  "pagers-core",
  "pagers-tui",
  "serde_json",
- "signal-hook 0.4.5",
+ "signal-hook 0.4.6",
  "tempfile",
  "thiserror",
  "tracing",
@@ -1196,9 +1196,9 @@ dependencies = [
 
 [[package]]
 name = "signal-hook"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b29ffa27d3d59a049bb328258de100f8012848d1b08d444e08bbc02ac468435e"
+checksum = "49f7447afd772ca79ad17ae0a3972a6b0df0cb4b80990fd82707593e9e012a74"
 dependencies = [
  "libc",
  "signal-hook-registry",
