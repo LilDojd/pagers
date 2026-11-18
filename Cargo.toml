@@ -14,7 +14,7 @@ readme = "README.md"
 [workspace.dependencies]
 bitvec = "1"
 fs-err = "3"
-nix = "0.31"
+nix = "0.32"
 pagers-core = { path = "crates/pagers-core", version = "0.2.2", default-features = false }
 tempfile = "3"
 humantime = "2"
