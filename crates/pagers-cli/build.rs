@@ -12,6 +12,11 @@ fn main() {
         Some(outdir) => outdir,
     };
     fs_err::create_dir_all(&outdir).unwrap();
+    // Lets the integration tests find the generated files wherever they were written.
+    println!(
+        "cargo:rustc-env=PAGERS_GENERATED_DIR={}",
+        std::path::Path::new(&outdir).display()
+    );
 
     let mut cmd = Cli::command();
 

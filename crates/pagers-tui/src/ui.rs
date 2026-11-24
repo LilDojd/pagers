@@ -208,7 +208,7 @@ mod tests {
 
         let mb = "\u{00e9}\u{00e9}\u{00e9}\u{00e9}";
         assert_eq!(truncate_path(mb, 4), mb.to_string());
-        assert_eq!(truncate_path(mb, 3), format!("\u{2026}\u{00e9}\u{00e9}"));
+        assert_eq!(truncate_path(mb, 3), "\u{2026}\u{00e9}\u{00e9}");
     }
 
     #[test]
