@@ -477,20 +477,9 @@ fn test_touch_then_query_shows_resident() {
     );
 }
 
+/// Where the build script wrote the shell completions.
 fn build_out_dir() -> std::path::PathBuf {
-    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_pagers"));
-    let profile_dir = bin.parent().unwrap();
-    let build_dir = profile_dir.join("build");
-    for entry in fs_err::read_dir(&build_dir).expect("build dir not found") {
-        let entry = entry.unwrap();
-        if entry.file_name().to_string_lossy().starts_with("pagers-") {
-            let out = entry.path().join("out");
-            if out.join("_pagers").exists() {
-                return out;
-            }
-        }
-    }
-    panic!("completion files not found in {}", build_dir.display());
+    std::path::PathBuf::from(env!("PAGERS_GENERATED_DIR"))
 }
 
 #[test]
