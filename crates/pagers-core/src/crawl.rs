@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use dua_core::Order;
+use dua_core::{Options, Order};
 
 use crate::Cancellation;
 use crate::mincore::PageMap;
@@ -245,6 +245,18 @@ impl TraversalRoot {
             |relative| self.logical.join(relative),
         )
     }
+
+    /// Report a traversal failure against the logical path of the entry that caused it.
+    fn walk_error(&self, error: &dua_core::Error) -> crate::Error {
+        let path = error
+            .path()
+            .map_or_else(|| self.logical.clone(), |path| self.logical_path(path));
+        let source = error.io_error();
+        crate::Error::io(
+            path.display().to_string(),
+            io::Error::new(source.kind(), source.to_string()),
+        )
+    }
 }
 
 fn walk_dir_entries(
@@ -288,10 +300,16 @@ fn walk_dir_entries(
         let descend_cancellation = cancellation.clone();
         let walk_stop = Arc::new(AtomicBool::new(false));
         let descend_stop = Arc::clone(&walk_stop);
+        let options = if needs_meta {
+            Options::default()
+        } else {
+            Options::default().skip_metadata()
+        };
         let entries = dua_core::walk(
             &root.physical,
             config.threads.effective(),
             Order::Completion,
+            options,
             move |entry| {
                 if descend_cancellation.is_cancelled() || descend_stop.load(Ordering::Relaxed) {
                     return false;
@@ -300,10 +318,7 @@ fn walk_dir_entries(
                     return true;
                 }
                 if descend_root.device.is_some_and(|device| {
-                    entry
-                        .metadata
-                        .as_ref()
-                        .map_or(true, |metadata| metadata.dev() != device)
+                    !matches!(&entry.metadata, Some(Ok(metadata)) if metadata.dev() == device)
                 }) {
                     return false;
                 }
@@ -326,8 +341,7 @@ fn walk_dir_entries(
                 continue;
             }
             let result = (|| -> crate::Result<()> {
-                let entry = entry_result
-                    .map_err(|error| crate::Error::io(root.logical.display().to_string(), error))?;
+                let entry = entry_result.map_err(|error| root.walk_error(&error))?;
                 if entry.depth == 0 && entry.file_type.is_dir() {
                     return Ok(());
                 }
@@ -359,7 +373,12 @@ fn walk_dir_entries(
                         }
                     } else if metadata.is_file()
                         && path_allowed(&logical_path, false, config, root.overrides.as_deref())
-                        && file_allowed(Some(&metadata), config, needs_meta, seen_inodes)
+                        && file_allowed(
+                            Some(FileIdentity::from_std(&metadata)),
+                            config,
+                            needs_meta,
+                            seen_inodes,
+                        )
                     {
                         emit(logical_path)?;
                     }
@@ -367,14 +386,14 @@ fn walk_dir_entries(
                 }
 
                 let metadata = match entry.metadata.as_ref() {
-                    Ok(metadata) => Some(metadata),
-                    Err(error) if needs_meta => {
+                    Some(Ok(metadata)) => Some(FileIdentity::from_walk(metadata)),
+                    Some(Err(error)) if needs_meta => {
                         return Err(crate::Error::io(
                             logical_path.display().to_string(),
                             io::Error::new(error.kind(), error.to_string()),
                         ));
                     }
-                    Err(_) => None,
+                    Some(Err(_)) | None => None,
                 };
 
                 if entry.file_type.is_dir() {
@@ -420,7 +439,12 @@ fn explicit_file_allowed(
     if !path_allowed(path, false, config, overrides.as_ref()) {
         return false;
     }
-    file_allowed(Some(metadata), config, needs_meta, seen_inodes)
+    file_allowed(
+        Some(FileIdentity::from_std(metadata)),
+        config,
+        needs_meta,
+        seen_inodes,
+    )
 }
 
 fn path_allowed(
@@ -435,8 +459,43 @@ fn path_allowed(
     })
 }
 
+/// The metadata that file filtering reads, independent of where it came from:
+/// `dua_core::Metadata` is `std::fs::Metadata` on Linux but its own type on macOS.
+#[derive(Clone, Copy)]
+struct FileIdentity {
+    len: u64,
+    dev: u64,
+    ino: u64,
+    nlink: u64,
+}
+
+impl FileIdentity {
+    fn from_std(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt as _;
+
+        Self {
+            len: metadata.len(),
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            nlink: metadata.nlink(),
+        }
+    }
+
+    fn from_walk(metadata: &dua_core::Metadata) -> Self {
+        #[cfg(not(target_os = "macos"))]
+        use std::os::unix::fs::MetadataExt as _;
+
+        Self {
+            len: metadata.len(),
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            nlink: metadata.nlink(),
+        }
+    }
+}
+
 fn file_allowed(
-    metadata: Option<&std::fs::Metadata>,
+    metadata: Option<FileIdentity>,
     config: &CrawlConfig,
     needs_meta: bool,
     seen_inodes: &mut HashSet<(u64, u64)>,
@@ -447,22 +506,17 @@ fn file_allowed(
 
     if let Some(max_size) = config.max_file_size
         && let Some(metadata) = metadata
-        && metadata.len() > max_size
+        && metadata.len > max_size
     {
         return false;
     }
 
-    if !config.count_hardlinks {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if let Some(metadata) = metadata
-                && metadata.nlink() > 1
-                && !seen_inodes.insert((metadata.dev(), metadata.ino()))
-            {
-                return false;
-            }
-        }
+    if !config.count_hardlinks
+        && let Some(metadata) = metadata
+        && metadata.nlink > 1
+        && !seen_inodes.insert((metadata.dev, metadata.ino))
+    {
+        return false;
     }
 
     true
