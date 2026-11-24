@@ -12,7 +12,7 @@
       craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (
         inputs.fenix.packages.${system}.fromToolchainFile {
           file = self + /rust-toolchain.toml;
-          sha256 = "sha256-A1abGIbOtcBSdrUMhDGrER3pRM1hQP4fp9gh3Y4PKc8=";
+          sha256 = "sha256-MFHoWVcPZKjFrLnQnodCXbUsfZcofGfo9tV9fTTvklg=";
         }
       );
 
