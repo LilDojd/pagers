@@ -13,7 +13,7 @@
         let
           toolchain = inputs.fenix.packages.${system}.fromToolchainFile {
             file = self + /rust-toolchain.toml;
-            sha256 = "sha256-A1abGIbOtcBSdrUMhDGrER3pRM1hQP4fp9gh3Y4PKc8=";
+            sha256 = "sha256-MFHoWVcPZKjFrLnQnodCXbUsfZcofGfo9tV9fTTvklg=";
           };
           craneLib = (inputs.crane.mkLib crossPkgs).overrideToolchain (_: toolchain);
           src = craneLib.cleanCargoSource self;
@@ -31,15 +31,18 @@
             "${crossPkgs.stdenv.cc.targetPrefix}cc";
           HOST_CC = "${pkgs.stdenv.cc}/bin/cc";
 
+          # The build script writes man pages and completions here instead of into
+          # Cargo's `OUT_DIR`, whose location under `target` is not stable.
+          preBuild = ''
+            export SHELL_COMPLETIONS_DIR="$NIX_BUILD_TOP/shell-completions"
+          '';
+
           postInstall = ''
-            buildDir=$(find target -path '*/build/pagers-*/out' -type d -exec test -f '{}/pagers.bash' \; -print -quit)
-            if [ -n "$buildDir" ]; then
-              installManPage "$buildDir"/*.1
-              installShellCompletion \
-                --bash "$buildDir"/pagers.bash \
-                --zsh "$buildDir"/_pagers \
-                --fish "$buildDir"/pagers.fish
-            fi
+            installManPage "$SHELL_COMPLETIONS_DIR"/*.1
+            installShellCompletion \
+              --bash "$SHELL_COMPLETIONS_DIR"/pagers.bash \
+              --zsh "$SHELL_COMPLETIONS_DIR"/_pagers \
+              --fish "$SHELL_COMPLETIONS_DIR"/pagers.fish
           '';
 
           nativeBuildInputs = [
