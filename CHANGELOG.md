@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4](https://github.com/LilDojd/pagers/compare/v0.2.3...v0.2.4) - 2026-11-25
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.2.3](https://github.com/LilDojd/pagers/compare/v0.2.2...v0.2.3) - 2026-11-24
 
 ### Fixed
